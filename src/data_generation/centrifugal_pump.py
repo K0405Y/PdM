@@ -1,0 +1,745 @@
+"""
+Centrifugal Data Pump Simulator 
+
+This module simulates industrial centrifugal pumps typical of offshore platforms,
+refineries, and process facilities. Pumps are the most numerous rotating equipment
+in oil & gas operations, critical for production continuity and safety.
+
+Key Features:
+- Cavitation detection through NPSH monitoring and acoustic signatures
+- Seal health tracking (mechanical seals, gland packing)
+- Bearing degradation with temperature and vibration correlation
+- Hydraulic performance modeling (BEP, efficiency curves)
+- Motor current signature for electrical/mechanical anomaly detection
+
+Reference: API 610, Hydraulic Institute Standards, Bently Nevada guidelines
+"""
+
+import numpy as np
+import random
+import math
+from datetime import datetime
+
+
+class CavitationModel:
+    """
+    Models cavitation phenomena in centrifugal pumps.
+    
+    Cavitation occurs when NPSH available (NPSHa) drops below NPSH required (NPSHr),
+    causing vapor bubbles to form and collapse. This is detected through:
+    - NPSH margin monitoring
+    - High-frequency acoustic emissions (15-100 kHz)
+    - Characteristic vibration patterns
+    """
+    
+    SEVERITY_NONE = 0
+    SEVERITY_INCIPIENT = 1
+    SEVERITY_MODERATE = 2
+    SEVERITY_SEVERE = 3
+    
+    def __init__(self, 
+                 npsh_required: float = 3.0,
+                 npsh_margin_alarm: float = 1.0,
+                 npsh_margin_trip: float = 0.3):
+        """
+        Initialize cavitation model.
+        
+        Args:
+            npsh_required: Base NPSHr at BEP (meters)
+            npsh_margin_alarm: Margin for alarm (meters)
+            npsh_margin_trip: Margin for trip (meters)
+        """
+        self.npsh_required = npsh_required
+        self.npsh_margin_alarm = npsh_margin_alarm
+        self.npsh_margin_trip = npsh_margin_trip
+        
+    def calculate_npsh_required(self, 
+                                 flow_ratio: float,
+                                 speed_ratio: float = 1.0) -> float:
+        """Calculate NPSHr based on operating point."""
+        base_npsh = self.npsh_required
+        flow_factor = 1.0 + 0.5 * (flow_ratio - 1.0)**2
+        speed_factor = speed_ratio ** 2
+        return base_npsh * flow_factor * speed_factor
+    
+    def calculate_margin(self, npsh_available: float, npsh_required: float) -> float:
+        """Calculate NPSH margin (NPSHa - NPSHr)."""
+        return npsh_available - npsh_required
+    
+    def get_severity(self, margin: float) -> int:
+        """Determine cavitation severity from NPSH margin."""
+        if margin > self.npsh_margin_alarm:
+            return self.SEVERITY_NONE
+        elif margin > self.npsh_margin_trip:
+            return self.SEVERITY_INCIPIENT
+        elif margin > 0:
+            return self.SEVERITY_MODERATE
+        else:
+            return self.SEVERITY_SEVERE
+            
+    def is_trip_condition(self, margin: float) -> bool:
+        """Check if cavitation requires trip."""
+        return margin < self.npsh_margin_trip
+
+
+class MechanicalSealModel:
+    """
+    Models mechanical seal health and leakage in centrifugal pumps.
+    """
+    
+    def __init__(self, 
+                 initial_health: float = 0.95,
+                 degradation_rate: float = 0.00008):
+        """
+        Initialize mechanical seal model.
+        
+        Args:
+            initial_health: Initial seal condition (0-1)
+            degradation_rate: Base degradation per operating hour
+        """
+        self.health = initial_health
+        self.degradation_rate = degradation_rate
+        self.failure_threshold = 0.30
+        self.base_leakage = 0.5
+        
+    def step(self, 
+             operating_severity: float = 1.0,
+             temperature_factor: float = 1.0,
+             contamination_factor: float = 1.0) -> dict:
+        """
+        Advance seal degradation by one hour.
+        
+        Returns:
+            dict: Seal health and leakage rate
+            
+        Raises:
+            Exception: When seal fails
+        """
+        effective_rate = (self.degradation_rate * 
+                         operating_severity * 
+                         temperature_factor * 
+                         contamination_factor)
+        
+        self.health -= effective_rate
+        
+        if self.health < self.failure_threshold:
+            raise Exception("F_SEAL")
+            
+        leakage_factor = math.exp(2 * (1 - self.health))
+        leakage = self.base_leakage * leakage_factor
+        
+        return {
+            'seal_health': self.health,
+            'leakage_rate': leakage
+        }
+
+
+class PumpBearingModel:
+    """
+    Models pump bearing health with temperature and vibration correlation.
+    """
+    
+    BEARING_TYPES = ['drive_end', 'non_drive_end']
+    
+    DEFECT_FREQS = {
+        'outer_race': 3.58,
+        'inner_race': 5.42,
+        'ball': 2.37,
+        'cage': 0.42
+    }
+    
+    def __init__(self, initial_health: dict = None):
+        """
+        Initialize bearing model.
+        
+        Args:
+            initial_health: Dict with 'drive_end' and 'non_drive_end' health
+        """
+        self.health = initial_health or {
+            'drive_end': 0.92,
+            'non_drive_end': 0.94
+        }
+        
+        self.degradation_rates = {
+            'drive_end': 0.00006,
+            'non_drive_end': 0.00004
+        }
+        
+        self.failure_threshold = 0.28
+        self.ambient_temp = 35.0
+        self.current_temps = {
+            'drive_end': self.ambient_temp,
+            'non_drive_end': self.ambient_temp
+        }
+        
+    def step(self, 
+             rpm: float,
+             load_factor: float = 1.0,
+             lubrication_factor: float = 1.0) -> dict:
+        """
+        Advance bearing degradation.
+        
+        Returns:
+            dict: Bearing health and temperature values
+            
+        Raises:
+            Exception: When bearing fails
+        """
+        result = {}
+        speed_factor = (rpm / 3000) ** 0.5 if rpm > 0 else 0
+        
+        for bearing in self.BEARING_TYPES:
+            rate = self.degradation_rates[bearing]
+            effective_rate = rate * speed_factor * load_factor * lubrication_factor
+            self.health[bearing] -= effective_rate
+            
+            if self.health[bearing] < self.failure_threshold:
+                raise Exception(f"F_BEARING_{bearing.upper()}")
+                
+            if rpm > 0:
+                base_temp = self.ambient_temp + 20 * speed_factor
+                friction_heat = (1.0 - self.health[bearing]) * 50
+                load_heat = (load_factor - 1.0) * 10 if load_factor > 1 else 0
+                target_temp = base_temp + friction_heat + load_heat
+            else:
+                target_temp = self.ambient_temp
+                
+            self.current_temps[bearing] = self._approach(
+                self.current_temps[bearing], target_temp, 0.08
+            )
+            
+            result[f'{bearing}_health'] = self.health[bearing]
+            result[f'{bearing}_temp'] = self.current_temps[bearing]
+            
+        return result
+    
+    def _approach(self, current: float, target: float, rate: float) -> float:
+        """Exponential approach to target."""
+        return current + (target - current) * rate
+    
+    def generate_vibration(self,
+                           rpm: float,
+                           duration: float = 1.0,
+                           sample_rate: int = 10240) -> np.ndarray:
+        """
+        Generate bearing vibration signal with defect frequencies.
+        
+        Returns:
+            np.ndarray: Vibration velocity signal (mm/s)
+        """
+        n_samples = int(sample_rate * duration)
+        
+        if rpm <= 0:
+            return np.random.normal(0, 0.05, n_samples)
+            
+        t = np.linspace(0, duration, n_samples)
+        f_shaft = rpm / 60.0
+        
+        signal = np.zeros(n_samples)
+        
+        # Base running vibration
+        signal += 0.5 * np.sin(2 * np.pi * f_shaft * t)
+        signal += 0.2 * np.sin(2 * np.pi * 2 * f_shaft * t)
+        
+        # Add defect frequencies based on health
+        for bearing in self.BEARING_TYPES:
+            health = self.health[bearing]
+            
+            if health < 0.8:
+                degradation = 0.8 - health
+                f_bpfo = self.DEFECT_FREQS['outer_race'] * f_shaft
+                amp = degradation * 2.0
+                signal += amp * np.sin(2 * np.pi * f_bpfo * t)
+                signal += amp * 0.3 * np.sin(2 * np.pi * (f_bpfo - f_shaft) * t)
+                signal += amp * 0.3 * np.sin(2 * np.pi * (f_bpfo + f_shaft) * t)
+                
+            if health < 0.6:
+                f_bpfi = self.DEFECT_FREQS['inner_race'] * f_shaft
+                amp = (0.6 - health) * 2.5
+                signal += amp * np.sin(2 * np.pi * f_bpfi * t)
+                
+        signal += np.random.normal(0, 0.1, n_samples)
+        
+        return signal
+
+
+class HydraulicPerformanceModel:
+    """
+    Models pump hydraulic performance including BEP tracking and efficiency.
+    """
+    
+    def __init__(self,
+                 design_flow: float = 100.0,
+                 design_head: float = 50.0,
+                 design_efficiency: float = 0.80,
+                 design_speed: float = 3000):
+        """
+        Initialize hydraulic performance model.
+        """
+        self.design_flow = design_flow
+        self.design_head = design_head
+        self.design_efficiency = design_efficiency
+        self.design_speed = design_speed
+        
+        self._a = -design_head / (1.5 * design_flow)**2
+        self._b = 0
+        self._c = design_head * 1.1
+        
+    def calculate_head(self, 
+                       flow: float, 
+                       speed: float,
+                       impeller_health: float = 1.0) -> float:
+        """Calculate pump head at given flow and speed."""
+        speed_ratio = speed / self.design_speed
+        flow_at_design_speed = flow / speed_ratio if speed_ratio > 0 else 0
+        head_design = self._a * flow_at_design_speed**2 + self._b * flow_at_design_speed + self._c
+        head = head_design * speed_ratio**2
+        degradation_factor = 0.85 + 0.15 * impeller_health
+        head *= degradation_factor
+        return max(0, head)
+    
+    def calculate_efficiency(self,
+                              flow: float,
+                              speed: float,
+                              impeller_health: float = 1.0) -> float:
+        """Calculate pump efficiency at operating point."""
+        if speed <= 0 or flow <= 0:
+            return 0.0
+            
+        speed_ratio = speed / self.design_speed
+        flow_ratio = flow / (self.design_flow * speed_ratio)
+        eta = self.design_efficiency * (1 - 0.5 * (flow_ratio - 1.0)**2)
+        eta *= (0.9 + 0.1 * impeller_health)
+        return max(0.1, min(eta, 0.95))
+    
+    def calculate_bep_deviation(self, flow: float, speed: float) -> float:
+        """Calculate deviation from BEP as percentage."""
+        speed_ratio = speed / self.design_speed if self.design_speed > 0 else 0
+        bep_flow = self.design_flow * speed_ratio
+        if bep_flow <= 0:
+            return 100.0
+        return abs((flow - bep_flow) / bep_flow) * 100
+
+
+class CentrifugalPump:
+    """
+    Industrial Centrifugal Pump Simulator for Predictive Maintenance.
+    
+    Operating Envelope (based on API 610):
+    - Speed: 1,000 - 6,000 RPM
+    - Flow: 10 - 500 m³/hr
+    - Head: 20 - 200 m
+    - Vibration: 2.5 - 7.0 mm/s (API 610 limits)
+    """
+    
+    LIMITS = {
+        'speed_min': 1000,
+        'speed_max': 6000,
+        'speed_rated': 3000,
+        'vibration_alarm': 4.5,
+        'vibration_trip': 7.0,
+        'bearing_temp_max': 95,
+        'seal_leakage_alarm': 10,
+        'motor_current_max': 1.15,
+    }
+    
+    def __init__(self,
+                 name: str,
+                 initial_health: dict = None,
+                 design_flow: float = 150.0,
+                 design_head: float = 80.0,
+                 design_speed: float = 3000,
+                 fluid_density: float = 850.0,
+                 npsh_available: float = 8.0):
+        """
+        Initialize centrifugal pump simulator.
+        """
+        self.name = name
+        self.design_flow = design_flow
+        self.design_head = design_head
+        self.design_speed = design_speed
+        self.fluid_density = fluid_density
+        self.npsh_available = npsh_available
+        
+        # Component models
+        self.hydraulic_model = HydraulicPerformanceModel(
+            design_flow, design_head, 0.78, design_speed
+        )
+        self.cavitation_model = CavitationModel(npsh_required=3.5)
+        self.seal_model = MechanicalSealModel(
+            initial_health=(initial_health or {}).get('seal', 0.93)
+        )
+        self.bearing_model = PumpBearingModel(
+            {
+                'drive_end': (initial_health or {}).get('bearing_de', 0.90),
+                'non_drive_end': (initial_health or {}).get('bearing_nde', 0.92)
+            }
+        )
+        
+        # Impeller health
+        self.impeller_health = (initial_health or {}).get('impeller', 0.94)
+        self.impeller_degradation_rate = 0.00003
+        
+        # Operating state
+        self.speed = 0.0
+        self.speed_target = 0.0
+        self.flow = 0.0
+        self.head = 0.0
+        self.efficiency = 0.0
+        self.power = 0.0
+        
+        # Electrical state - properly size motor for pump power
+        # Estimate motor kW from pump hydraulics at design point
+        design_power = (fluid_density * 9.81 * design_flow * design_head) / (0.78 * 3600)
+        self.motor_rated_power = design_power * 1.25  # 25% margin
+        # Calculate rated current from motor power (480V, 3-phase, 0.85 PF, 0.92 eff)
+        self.motor_rated_current = (self.motor_rated_power * 1000) / (math.sqrt(3) * 480 * 0.85 * 0.92)
+        self.motor_current = 0.0
+        
+        # Process conditions
+        self.suction_pressure = 200.0
+        self.discharge_pressure = 200.0
+        self.fluid_temp = 40.0
+        
+        # Time tracking
+        self.operating_hours = 0.0
+        self.t = 0
+        
+    def set_speed(self, target_rpm: float):
+        """Set target operating speed."""
+        self.speed_target = max(0, min(target_rpm, self.LIMITS['speed_max']))
+        
+    def _calculate_operating_severity(self) -> float:
+        """Calculate severity based on operating conditions."""
+        severity = 1.0
+        
+        speed_factor = self.speed / self.LIMITS['speed_rated'] if self.LIMITS['speed_rated'] > 0 else 1.0
+        if speed_factor > 1.0:
+            severity *= (1.0 + 0.5 * (speed_factor - 1.0)**2)
+            
+        bep_deviation = self.hydraulic_model.calculate_bep_deviation(self.flow, self.speed)
+        if bep_deviation > 20:
+            severity *= (1.0 + 0.02 * (bep_deviation - 20))
+            
+        npsh_r = self.cavitation_model.calculate_npsh_required(
+            self.flow / self.design_flow if self.design_flow > 0 else 0
+        )
+        margin = self.cavitation_model.calculate_margin(self.npsh_available, npsh_r)
+        if margin < 2.0:
+            severity *= (1.0 + 0.5 * (2.0 - margin))
+            
+        return severity
+    
+    def _update_impeller(self, severity: float) -> float:
+        """Update impeller health and return current health."""
+        if self.speed > 0:
+            self.impeller_health -= self.impeller_degradation_rate * severity / 3600
+            
+        if self.impeller_health < 0.35:
+            raise Exception("F_IMPELLER")
+            
+        return self.impeller_health
+    
+    def _update_hydraulics(self):
+        """Update hydraulic state based on current operating conditions."""
+        if self.speed <= 0:
+            self.flow = 0
+            self.head = 0
+            self.efficiency = 0
+            self.power = 0
+            self.discharge_pressure = self.suction_pressure
+            return
+            
+        speed_ratio = self.speed / self.design_speed
+        self.flow = self.design_flow * speed_ratio * random.uniform(0.85, 1.15)
+        
+        self.head = self.hydraulic_model.calculate_head(
+            self.flow, self.speed, self.impeller_health
+        )
+        
+        self.efficiency = self.hydraulic_model.calculate_efficiency(
+            self.flow, self.speed, self.impeller_health
+        )
+        
+        if self.efficiency > 0:
+            self.power = (self.fluid_density * 9.81 * self.flow * self.head) / (self.efficiency * 3600)
+        else:
+            self.power = 0
+            
+        self.discharge_pressure = self.suction_pressure + (self.fluid_density * 9.81 * self.head / 1000)
+        
+    def _update_motor(self):
+        """Update motor electrical state."""
+        if self.speed <= 0:
+            self.motor_current = 0
+            return
+            
+        if self.power > 0:
+            # Calculate base motor current from power
+            # Account for motor efficiency (~0.92) and power factor (~0.85)
+            self.motor_current = (self.power * 1000) / (math.sqrt(3) * 480 * 0.85 * 0.92)
+        else:
+            self.motor_current = 0
+            
+        # Add small random variation (not multiplicative overload)
+        self.motor_current += random.uniform(-1, 2)
+        
+    def _approach(self, current: float, target: float, rate: float) -> float:
+        """Exponential approach to target."""
+        return current + (target - current) * rate
+    
+    def _add_noise(self, value: float, magnitude: float) -> float:
+        """Add measurement noise."""
+        return value + random.gauss(0, magnitude)
+        
+    def next_state(self) -> dict:
+        """
+        Advance simulation by one time step.
+        
+        Returns:
+            dict: Current telemetry values
+            
+        Raises:
+            Exception: With failure code on critical failure
+        """
+        # Update speed toward target
+        speed_rate = 0.15 if self.speed_target > self.speed else 0.20
+        self.speed = self._approach(self.speed, self.speed_target, speed_rate)
+        
+        # Calculate operating severity
+        severity = self._calculate_operating_severity()
+        
+        # Update impeller
+        impeller_health = self._update_impeller(severity)
+        
+        # Update hydraulics
+        self._update_hydraulics()
+        
+        # Update motor
+        self._update_motor()
+        
+        # Check motor current
+        if self.motor_current > self.motor_rated_current * self.LIMITS['motor_current_max']:
+            raise Exception("F_MOTOR_OVERLOAD")
+            
+        # Update seals (convert to hours)
+        seal_state = self.seal_model.step(severity / 3600)
+        
+        # Update bearings
+        load_factor = self.flow / self.design_flow if self.design_flow > 0 else 1.0
+        bearing_state = self.bearing_model.step(self.speed, load_factor)
+        
+        # Check bearing temperature
+        max_bearing_temp = max(
+            bearing_state['drive_end_temp'],
+            bearing_state['non_drive_end_temp']
+        )
+        if max_bearing_temp > self.LIMITS['bearing_temp_max']:
+            raise Exception("F_BEARING_OVERTEMP")
+            
+        # Generate vibration signal and compute metrics
+        vib_signal = self.bearing_model.generate_vibration(self.speed)
+        vib_rms = np.sqrt(np.mean(vib_signal**2))
+        vib_peak = np.max(np.abs(vib_signal))
+        
+        # Check vibration trip
+        if vib_rms > self.LIMITS['vibration_trip']:
+            raise Exception("F_HIGH_VIBRATION")
+            
+        # Check cavitation
+        flow_ratio = self.flow / self.design_flow if self.design_flow > 0 else 0
+        npsh_r = self.cavitation_model.calculate_npsh_required(flow_ratio)
+        npsh_margin = self.cavitation_model.calculate_margin(self.npsh_available, npsh_r)
+        cav_severity = self.cavitation_model.get_severity(npsh_margin)
+        
+        if self.cavitation_model.is_trip_condition(npsh_margin) and self.speed > 0:
+            raise Exception("F_CAVITATION")
+            
+        # Update operating hours
+        if self.speed > 0:
+            self.operating_hours += 1/3600
+            
+        self.t += 1
+        
+        # Build telemetry message
+        state = {
+            'speed': round(self._add_noise(self.speed, 3), 2),
+            'speed_target': round(self.speed_target, 2),
+            'flow': round(self._add_noise(self.flow, 0.5), 2),
+            'head': round(self._add_noise(self.head, 0.3), 2),
+            'efficiency': round(self.efficiency, 4),
+            'power': round(self._add_noise(self.power, 0.2), 2),
+            'suction_pressure': round(self._add_noise(self.suction_pressure, 2), 2),
+            'discharge_pressure': round(self._add_noise(self.discharge_pressure, 3), 2),
+            'fluid_temp': round(self._add_noise(self.fluid_temp, 0.2), 2),
+            'motor_current': round(self._add_noise(self.motor_current, 0.5), 2),
+            'motor_current_ratio': round(self.motor_current / self.motor_rated_current, 3),
+            'vibration_rms': round(vib_rms, 3),
+            'vibration_peak': round(vib_peak, 3),
+            'bearing_temp_de': round(self._add_noise(bearing_state['drive_end_temp'], 0.3), 2),
+            'bearing_temp_nde': round(self._add_noise(bearing_state['non_drive_end_temp'], 0.3), 2),
+            'npsh_available': round(self.npsh_available, 2),
+            'npsh_required': round(npsh_r, 2),
+            'npsh_margin': round(npsh_margin, 2),
+            'cavitation_severity': cav_severity,
+            'seal_leakage': round(seal_state['leakage_rate'], 3),
+            'bep_deviation': round(self.hydraulic_model.calculate_bep_deviation(self.flow, self.speed), 2),
+            'operating_hours': round(self.operating_hours, 2),
+            'health_impeller': round(impeller_health, 4),
+            'health_seal': round(seal_state['seal_health'], 4),
+            'health_bearing_de': round(bearing_state['drive_end_health'], 4),
+            'health_bearing_nde': round(bearing_state['non_drive_end_health'], 4),
+        }
+        
+        return state
+
+
+class PumpFailureModes:
+    """Catalog of pump failure modes for classification tasks."""
+    
+    FAILURE_MODES = {
+        'F_IMPELLER': 'Impeller Degradation - Erosion, corrosion, or damage',
+        'F_SEAL': 'Mechanical Seal Failure - Wear, thermal damage, or contamination',
+        'F_BEARING_DRIVE_END': 'Drive End Bearing Failure - Fatigue, lubrication, or contamination',
+        'F_BEARING_NON_DRIVE_END': 'Non-Drive End Bearing Failure',
+        'F_BEARING_OVERTEMP': 'Bearing Overtemperature - Excessive friction or cooling failure',
+        'F_HIGH_VIBRATION': 'High Vibration Trip - Mechanical instability',
+        'F_CAVITATION': 'Severe Cavitation - NPSH margin critical',
+        'F_MOTOR_OVERLOAD': 'Motor Overload - Excessive current draw'
+    }
+
+
+def generate_pump_dataset(
+    n_machines: int = 10,
+    n_cycles_per_machine: int = 200,
+    cycle_duration_range: tuple = (60, 300),
+    random_seed: int = None
+) -> tuple:
+    """
+    Generate run-to-failure dataset for multiple centrifugal pumps.
+    
+    Args:
+        n_machines: Number of pumps to simulate
+        n_cycles_per_machine: Operating cycles per pump
+        cycle_duration_range: (min, max) seconds per cycle
+        random_seed: Seed for reproducibility
+        
+    Returns:
+        tuple: (telemetry_records, failure_records)
+    """
+    if random_seed is not None:
+        random.seed(random_seed)
+        np.random.seed(random_seed)
+        
+    telemetry = []
+    failures = []
+    
+    pump_services = [
+        {'name': 'Crude Booster', 'design_flow': 200, 'design_head': 100, 'density': 850},
+        {'name': 'Seawater Injection', 'design_flow': 300, 'design_head': 150, 'density': 1025},
+        {'name': 'Process Water', 'design_flow': 100, 'design_head': 60, 'density': 1000},
+        {'name': 'Methanol Pump', 'design_flow': 50, 'design_head': 80, 'density': 790},
+        {'name': 'Fire Water', 'design_flow': 400, 'design_head': 120, 'density': 1000},
+    ]
+    
+    for m in range(n_machines):
+        service = pump_services[m % len(pump_services)]
+        machine_id = f"CP-{m+1:03d}"
+        
+        initial_health = {
+            'impeller': random.uniform(0.75, 0.98),
+            'seal': random.uniform(0.80, 0.98),
+            'bearing_de': random.uniform(0.72, 0.95),
+            'bearing_nde': random.uniform(0.75, 0.96)
+        }
+        
+        pump = CentrifugalPump(
+            machine_id,
+            initial_health,
+            design_flow=service['design_flow'] * random.uniform(0.9, 1.1),
+            design_head=service['design_head'] * random.uniform(0.9, 1.1),
+            design_speed=3000 + random.randint(-500, 500),
+            fluid_density=service['density'],
+            npsh_available=random.uniform(6, 12)
+        )
+        timestamp = datetime.now()
+        
+        try:
+            for cycle in range(n_cycles_per_machine):
+                duration = random.randint(*cycle_duration_range)
+                target_speed = pump.design_speed * random.uniform(0.85, 1.05)
+                
+                pump.set_speed(target_speed)
+                
+                for _ in range(duration):
+                    state = pump.next_state()
+                    state['timestamp'] = timestamp.isoformat()
+                    state['machineID'] = machine_id
+                    state['service'] = service['name']
+                    state['cycle'] = cycle
+                    telemetry.append(state)
+                    timestamp = datetime(
+                        timestamp.year, timestamp.month, timestamp.day,
+                        timestamp.hour, timestamp.minute,
+                        timestamp.second + 1
+                    )
+                    
+                pump.set_speed(0)
+                for _ in range(30):
+                    state = pump.next_state()
+                    state['timestamp'] = timestamp.isoformat()
+                    state['machineID'] = machine_id
+                    state['service'] = service['name']
+                    state['cycle'] = cycle
+                    telemetry.append(state)
+                    
+        except Exception as e:
+            failures.append({
+                'timestamp': timestamp.isoformat(),
+                'machineID': machine_id,
+                'service': service['name'],
+                'level': 'CRITICAL',
+                'code': str(e),
+                'message': PumpFailureModes.FAILURE_MODES.get(
+                    str(e), 'Unknown failure'
+                )
+            })
+            
+    return telemetry, failures
+
+
+if __name__ == '__main__':
+    print("Centrifugal Pump Simulator - Example Run")
+    print("=" * 50)
+    
+    pump = CentrifugalPump(
+        name="CP-001",
+        initial_health={
+            'impeller': 0.88,
+            'seal': 0.85,
+            'bearing_de': 0.82,
+            'bearing_nde': 0.86
+        },
+        design_flow=150,
+        design_head=80,
+        design_speed=3000,
+        fluid_density=850,
+        npsh_available=8.0
+    )
+    
+    print("\nStarting pump to 3000 RPM...")
+    pump.set_speed(3000)
+    
+    for i in range(10):
+        try:
+            state = pump.next_state()
+            print(f"t={i}: Speed={state['speed']:.0f} RPM, "
+                  f"Flow={state['flow']:.1f} m³/hr, "
+                  f"Head={state['head']:.1f} m, "
+                  f"Vib={state['vibration_rms']:.2f} mm/s, "
+                  f"NPSH margin={state['npsh_margin']:.1f} m")
+        except Exception as e:
+            print(f"FAILURE: {e}")
+            break
+            
+    print("\nDone.")

@@ -1,0 +1,579 @@
+"""
+Gas Turbine Data Simulator
+
+This module simulates an industrial gas turbine typical of offshore platforms and 
+LNG facilities. 
+Key Features:
+- Multi-mode degradation: Hot gas path, blade erosion, bearing wear, fuel system fouling
+- Realistic parameter ranges based on industrial standards
+- Physics-inspired degradation trajectories using exponential wear models
+- Thermodynamic performance monitoring simulation
+- Vibration signature generation with fault-specific harmonics
+
+Reference: API 670, Bently Nevada monitoring standards, industry operational data
+"""
+
+import numpy as np
+import random
+import math
+from datetime import datetime
+
+class GasTurbineHealthModel:
+    """
+    Manages multiple degradation pathways for gas turbine components.
+    Uses the generalized wear equation: h(t) = 1 - d - exp(a * t^b)
+    Each failure mode has independent degradation trajectories.
+    """
+    
+    # Failure mode codes
+    FAILURE_MODES = {
+        'F_HGP': 'Hot Gas Path Degradation - Combustion liner cracking',
+        'F_BLADE': 'Blade Erosion - Leading edge degradation',
+        'F_BEARING': 'Bearing Failure - Lubrication/mechanical degradation',
+        'F_FUEL': 'Fuel System Fouling - Nozzle blockage'
+    }
+    
+    def __init__(self, 
+                 initial_health: dict = None,
+                 degradation_params: dict = None):
+        """
+        Initialize health model for all degradation pathways.
+        
+        Args:
+            initial_health: Dict with keys 'hgp', 'blade', 'bearing', 'fuel'
+                           Values between 0.0 (failed) and 1.0 (new)
+            degradation_params: Dict of (d, a, b) tuples per mode
+        """
+        # Default initial health states (slightly degraded from new)
+        self.health = initial_health or {
+            'hgp': 0.92,   
+            'blade': 0.95,
+            'bearing': 0.90, 
+            'fuel': 0.93
+        }
+        
+        # Default degradation parameters (d, a, b) for h(t) = 1 - d - exp(a*t^b)
+        
+        # Different rates reflect real-world component lifespans
+        self.degradation_params = degradation_params or {
+            'hgp': (0.05, -0.25, 0.22),      # Slow initial, accelerating
+            'blade': (0.03, -0.30, 0.20),    # Erosion is more gradual
+            'bearing': (0.08, -0.35, 0.25),  # Can fail faster
+            'fuel': (0.04, -0.20, 0.18)      # Fouling is gradual
+        }
+        
+        # Failure thresholds - below these, component is considered failed
+        self.failure_thresholds = {
+            'hgp': 0.45,
+            'blade': 0.40,
+            'bearing': 0.35,
+            'fuel': 0.50
+        }
+        
+        # Initialize time-to-failure generators
+        self._init_generators()
+        
+    def _init_generators(self):
+        """Initialize health trajectory generators for each mode."""
+        self._generators = {}
+        for mode, (d, a, b) in self.degradation_params.items():
+            current_h = self.health[mode]
+            threshold = self.failure_thresholds[mode]
+            
+            # Calculate time remaining based on inverse health function
+            # h = 1 - d - exp(a*t^b) => t = (ln(1-d-h)/a)^(1/b)
+            try:
+                ttf = math.pow(math.log(1 - d - current_h) / a, 1 / b)
+            except (ValueError, ZeroDivisionError):
+                ttf = 1000  # Large default if calculation fails
+                
+            self._generators[mode] = self._health_generator(
+                ttf, d, a, b, threshold
+            )
+    
+    def _health_generator(self, ttf, d, a, b, threshold):
+        """
+        Generator yielding health values over time until failure.
+        
+        Yields:
+            tuple: (time_remaining, health_value)
+        """
+        for t in range(int(ttf), -1, -1):
+            h = 1 - d - math.exp(a * t**b)
+            if h < threshold:
+                break
+            yield t, h
+            
+    def step(self, operating_severity: float = 1.0):
+        """
+        Advance health model by one time step.
+        
+        Args:
+            operating_severity: Multiplier for degradation rate (1.0 = normal)
+                               Higher values accelerate degradation
+                               
+        Returns:
+            dict: Current health values for all modes
+            
+        Raises:
+            Exception: With failure mode code when component fails
+        """
+        updated_health = {}
+        
+        for mode, gen in self._generators.items():
+            try:
+                # Apply severity factor by potentially skipping steps
+                if operating_severity > 1.0 and random.random() < (operating_severity - 1.0):
+                    next(gen)  # Extra degradation step
+                    
+                t_remaining, h = next(gen)
+                self.health[mode] = h
+                updated_health[mode] = h
+            except StopIteration:
+                # This mode has reached failure
+                failure_code = f"F_{mode.upper()}"
+                raise Exception(failure_code)
+                
+        return updated_health
+
+class VibrationSignalGenerator:
+    """
+    Generates realistic vibration signals for gas turbine monitoring.
+    
+    Simulates accelerometer output at bearing housings with fault-specific
+    harmonic content based on rotor dynamics and machine condition.
+    """
+    
+    # Standard harmonics for healthy turbine (multiples of shaft frequency)
+    BASE_HARMONICS = [1, 2, 3]  # 1x, 2x, 3x shaft speed
+    
+    # Fault-specific harmonic patterns
+    FAULT_SIGNATURES = {
+        'unbalance': {'harmonics': [1], 'amplitude_mult': 3.0},
+        'misalignment': {'harmonics': [2], 'amplitude_mult': 2.5},
+        'blade_rub': {'harmonics': [1, 3, 5, 7], 'amplitude_mult': 2.0},
+        'bearing_defect': {'harmonics': [3.5, 7, 10.5], 'amplitude_mult': 1.5}
+    }
+    
+    def __init__(self, sample_rate: int = 1024):
+        """
+        Initialize vibration signal generator.
+        
+        Args:
+            sample_rate: Samples per second (Hz). 1024 is minimum for
+                        detecting bearing defects per Nyquist theorem.
+        """
+        self.sample_rate = sample_rate
+        self._phase = 0.0
+        
+    def generate(self, 
+                 rpm: float, 
+                 health_state: dict, 
+                 duration: float = 1.0) -> np.ndarray:
+        """
+        Generate vibration signal based on current operating state.
+        
+        Args:
+            rpm: Current rotor speed in revolutions per minute
+            health_state: Dict with health values for degradation modes
+            duration: Signal duration in seconds
+            
+        Returns:
+            np.ndarray: Vibration velocity signal in mm/s
+        """
+        if rpm <= 0:
+            return np.zeros(int(self.sample_rate * duration))
+            
+        n_samples = int(self.sample_rate * duration)
+        t = np.linspace(0, duration, n_samples, endpoint=False)
+        
+        # Fundamental frequency (Hz)
+        f0 = rpm / 60.0
+        
+        # Start with baseline healthy signal
+        signal = np.zeros(n_samples)
+        
+        # Add base harmonics (healthy machine signature)
+        base_amplitudes = [0.3, 0.15, 0.05]  # Typical healthy amplitudes (mm/s)
+        for harm, amp in zip(self.BASE_HARMONICS, base_amplitudes):
+            signal += amp * np.sin(2 * np.pi * harm * f0 * t + self._phase)
+            
+        # Add fault signatures based on degraded health
+        # Bearing health affects bearing defect signatures
+        bearing_health = health_state.get('bearing', 1.0)
+        if bearing_health < 0.7:
+            fault_amp = (0.7 - bearing_health) * 2.0  # Scale with degradation
+            for harm in self.FAULT_SIGNATURES['bearing_defect']['harmonics']:
+                signal += fault_amp * np.sin(2 * np.pi * harm * f0 * t)
+                
+        # Blade health affects rub signatures
+        blade_health = health_state.get('blade', 1.0)
+        if blade_health < 0.75:
+            fault_amp = (0.75 - blade_health) * 1.5
+            for harm in self.FAULT_SIGNATURES['blade_rub']['harmonics']:
+                signal += fault_amp * np.sin(2 * np.pi * harm * f0 * t)
+                
+        # General unbalance from hot gas path degradation
+        hgp_health = health_state.get('hgp', 1.0)
+        if hgp_health < 0.8:
+            unbal_amp = (0.8 - hgp_health) * 2.5
+            signal += unbal_amp * np.sin(2 * np.pi * f0 * t)
+            
+        # Add noise floor (instrumentation noise)
+        noise = np.random.normal(0, 0.05, n_samples)
+        signal += noise
+        
+        # Update phase for continuity
+        self._phase = (self._phase + 2 * np.pi * f0 * duration) % (2 * np.pi)
+        
+        return signal
+    
+    def compute_rms(self, signal: np.ndarray) -> float:
+        """Compute RMS velocity (mm/s) - primary vibration metric."""
+        return np.sqrt(np.mean(signal**2))
+    
+    def compute_peak(self, signal: np.ndarray) -> float:
+        """Compute peak velocity (mm/s)."""
+        return np.max(np.abs(signal))
+
+class GasTurbine:
+    """
+    Industrial Gas Turbine Simulator for Predictive Maintenance.
+    
+    Simulates a gas turbine typical of offshore platforms and LNG facilities
+    with realistic operating parameters, thermodynamic performance, and
+    multiple degradation pathways.
+    
+    Operating Envelope (based on industrial data):
+    - Speed: 3,000 - 15,000 RPM (varies by design)
+    - Exhaust Gas Temperature: 450 - 600°C
+    - Bearing Vibration: 0.5 - 3.0 mm/s (alarm at 2.2 mm/s)
+    - Lube Oil Temperature: 90 - 130°C
+    - Fuel Flow Rate: 1.5 - 3.5 kg/s
+    """
+    
+    # Operating limits based on API 670 and industry standards
+    LIMITS = {
+        'speed_min': 3000,       # RPM
+        'speed_max': 15000,      # RPM
+        'speed_rated': 9500,     # Typical rated speed
+        'egt_min': 400,          # °C (idle)
+        'egt_max': 620,          # °C (alarm threshold)
+        'egt_nominal': 520,      # °C (normal full load)
+        'vib_alarm': 2.2,        # mm/s (API 670)
+        'vib_trip': 3.0,         # mm/s
+        'oil_temp_min': 70,      # °C
+        'oil_temp_max': 130,     # °C (alarm)
+        'oil_temp_nominal': 95,  # °C
+        'fuel_flow_min': 0.5,    # kg/s (idle)
+        'fuel_flow_max': 3.8,    # kg/s
+    }
+    
+    def __init__(self, 
+                 name: str,
+                 initial_health: dict = None,
+                 ambient_temp: float = 25.0,
+                 ambient_pressure: float = 101.3):
+        """
+        Initialize gas turbine simulator.
+        
+        Args:
+            name: Unique identifier for this turbine
+            initial_health: Dict with initial health values per component
+            ambient_temp: Ambient temperature in °C
+            ambient_pressure: Ambient pressure in kPa
+        """
+        self.name = name
+        self.ambient_temp = ambient_temp
+        self.ambient_pressure = ambient_pressure
+        
+        # Initialize health model
+        self.health_model = GasTurbineHealthModel(initial_health)
+        
+        # Initialize vibration generator
+        self.vib_generator = VibrationSignalGenerator()
+        
+        # Operating state
+        self.speed = 0.0           # Current RPM
+        self.speed_target = 0.0   # Target RPM
+        self.egt = ambient_temp   # Exhaust gas temperature
+        self.oil_temp = ambient_temp
+        self.fuel_flow = 0.0
+        
+        # Thermodynamic state
+        self.compressor_discharge_temp = ambient_temp
+        self.compressor_discharge_pressure = ambient_pressure
+        
+        # Time tracking
+        self.operating_hours = 0.0
+        self.t = 0
+        
+        # Performance degradation factor (1.0 = new, <1.0 = degraded)
+        self.efficiency = 1.0
+        
+    def set_speed(self, target_rpm: float):
+        """Set target operating speed."""
+        self.speed_target = max(0, min(target_rpm, self.LIMITS['speed_max']))
+        
+    def _calculate_operating_severity(self) -> float:
+        """
+        Calculate operating severity factor based on current conditions.
+        
+        High temperatures and speeds accelerate degradation.
+        """
+        speed_factor = self.speed / self.LIMITS['speed_rated']
+        temp_factor = self.egt / self.LIMITS['egt_nominal']
+        
+        # Severity increases exponentially above rated conditions
+        severity = 1.0
+        if speed_factor > 1.0:
+            severity *= (1.0 + 0.5 * (speed_factor - 1.0)**2)
+        if temp_factor > 1.0:
+            severity *= (1.0 + 0.3 * (temp_factor - 1.0)**2)
+            
+        return severity
+    
+    def _update_thermodynamics(self, health_state: dict):
+        """
+        Update thermodynamic parameters based on operating conditions and health.
+        
+        Hot gas path degradation increases EGT for same power output.
+        Blade erosion reduces efficiency.
+        """
+        if self.speed <= 0:
+            # Cooldown dynamics
+            self.egt = self._approach(self.egt, self.ambient_temp, 0.02)
+            self.oil_temp = self._approach(self.oil_temp, self.ambient_temp, 0.01)
+            self.fuel_flow = 0.0
+            self.compressor_discharge_temp = self.ambient_temp
+            self.compressor_discharge_pressure = self.ambient_pressure
+            return
+            
+        # Calculate efficiency loss from degradation
+        blade_health = health_state.get('blade', 1.0)
+        hgp_health = health_state.get('hgp', 1.0)
+        self.efficiency = 0.85 + 0.15 * (blade_health * hgp_health)
+        
+        # EGT increases with load and degradation
+        load_fraction = self.speed / self.LIMITS['speed_rated']
+        base_egt = self.LIMITS['egt_min'] + (
+            self.LIMITS['egt_nominal'] - self.LIMITS['egt_min']
+        ) * load_fraction
+        
+        # Degradation forces higher firing temps for same output
+        egt_penalty = (2.0 - hgp_health - blade_health) * 30  # Up to 60°C penalty
+        target_egt = base_egt + egt_penalty
+        
+        self.egt = self._approach(self.egt, target_egt, 0.1)
+        
+        # Fuel flow correlates with load and inverse of efficiency
+        base_fuel = self.LIMITS['fuel_flow_min'] + (
+            self.LIMITS['fuel_flow_max'] - self.LIMITS['fuel_flow_min']
+        ) * load_fraction
+        
+        fuel_health = health_state.get('fuel', 1.0)
+        self.fuel_flow = base_fuel / (self.efficiency * fuel_health)
+        
+        # Oil temperature correlates with load and bearing health
+        bearing_health = health_state.get('bearing', 1.0)
+        target_oil = self.LIMITS['oil_temp_min'] + (
+            self.LIMITS['oil_temp_nominal'] - self.LIMITS['oil_temp_min']
+        ) * load_fraction
+        target_oil += (1.0 - bearing_health) * 25  # Friction heating
+        
+        self.oil_temp = self._approach(self.oil_temp, target_oil, 0.05)
+        
+        # Compressor discharge (simplified model)
+        pressure_ratio = 10 + 5 * load_fraction  # Typical for industrial GT
+        self.compressor_discharge_pressure = self.ambient_pressure * pressure_ratio
+        self.compressor_discharge_temp = (self.ambient_temp + 273.15) * (
+            pressure_ratio ** 0.286
+        ) - 273.15  # Isentropic compression
+        
+    def _approach(self, current: float, target: float, rate: float) -> float:
+        """Exponential approach to target value."""
+        return current + (target - current) * rate
+    
+    def _add_noise(self, value: float, magnitude: float) -> float:
+        """Add realistic measurement noise."""
+        return value + random.gauss(0, magnitude)
+        
+    def next_state(self) -> dict:
+        """
+        Advance simulation by one time step and return current state.
+        
+        Returns:
+            dict: Current telemetry values
+            
+        Raises:
+            Exception: With failure code when critical failure occurs
+        """
+        # Update speed toward target
+        speed_rate = 0.1 if self.speed_target > self.speed else 0.15
+        self.speed = self._approach(self.speed, self.speed_target, speed_rate)
+        
+        # Calculate operating severity
+        severity = self._calculate_operating_severity()
+        
+        # Advance health model (may raise exception on failure)
+        health_state = self.health_model.step(severity)
+        
+        # Update thermodynamic state
+        self._update_thermodynamics(health_state)
+        
+        # Generate vibration signal and compute metrics
+        vib_signal = self.vib_generator.generate(
+            self.speed, health_state, duration=1.0
+        )
+        vib_rms = self.vib_generator.compute_rms(vib_signal)
+        vib_peak = self.vib_generator.compute_peak(vib_signal)
+        
+        # Check for vibration trip
+        if vib_rms > self.LIMITS['vib_trip']:
+            raise Exception("F_VIB_TRIP")
+            
+        # Update operating hours
+        if self.speed > 0:
+            self.operating_hours += 1/3600  # Assuming 1-second intervals
+            
+        self.t += 1
+        
+        # Build telemetry message
+        state = {
+            'speed': round(self._add_noise(self.speed, 5), 2),
+            'speed_target': round(self.speed_target, 2),
+            'exhaust_gas_temp': round(self._add_noise(self.egt, 2), 2),
+            'oil_temp': round(self._add_noise(self.oil_temp, 0.5), 2),
+            'fuel_flow': round(self._add_noise(self.fuel_flow, 0.05), 3),
+            'vibration_rms': round(vib_rms, 3),
+            'vibration_peak': round(vib_peak, 3),
+            'compressor_discharge_temp': round(
+                self._add_noise(self.compressor_discharge_temp, 1), 2
+            ),
+            'compressor_discharge_pressure': round(
+                self._add_noise(self.compressor_discharge_pressure, 5), 2
+            ),
+            'ambient_temp': round(self._add_noise(self.ambient_temp, 0.1), 2),
+            'ambient_pressure': round(self._add_noise(self.ambient_pressure, 0.1), 2),
+            'efficiency': round(self.efficiency, 4),
+            'operating_hours': round(self.operating_hours, 2),
+            'health_hgp': round(health_state['hgp'], 4),
+            'health_blade': round(health_state['blade'], 4),
+            'health_bearing': round(health_state['bearing'], 4),
+            'health_fuel': round(health_state['fuel'], 4),
+        }
+        
+        return state
+
+# Convenience function for batch data generation
+def generate_turbine_dataset(
+    n_machines: int = 5,
+    n_cycles_per_machine: int = 100,
+    cycle_duration_range: tuple = (60, 300),
+    random_seed: int = None
+) -> tuple:
+    """
+    Generate run-to-failure dataset for multiple gas turbines.
+    
+    Args:
+        n_machines: Number of turbines to simulate
+        n_cycles_per_machine: Operating cycles per turbine
+        cycle_duration_range: (min, max) seconds per cycle
+        random_seed: Seed for reproducibility
+        
+    Returns:
+        tuple: (telemetry_records, failure_records)
+    """
+    if random_seed is not None:
+        random.seed(random_seed)
+        np.random.seed(random_seed)
+        
+    telemetry = []
+    failures = []
+    
+    for m in range(n_machines):
+        machine_id = f"GT-{m+1:03d}"
+        
+        # Random initial health to get varied failure times
+        initial_health = {
+            'hgp': random.uniform(0.75, 0.98),
+            'blade': random.uniform(0.80, 0.98),
+            'bearing': random.uniform(0.70, 0.95),
+            'fuel': random.uniform(0.75, 0.98)
+        }
+        
+        turbine = GasTurbine(machine_id, initial_health)
+        timestamp = datetime.now()
+        
+        try:
+            for cycle in range(n_cycles_per_machine):
+                duration = random.randint(*cycle_duration_range)
+                target_speed = random.uniform(7000, 12000)
+                
+                turbine.set_speed(target_speed)
+                
+                for _ in range(duration):
+                    state = turbine.next_state()
+                    state['timestamp'] = timestamp.isoformat()
+                    state['machineID'] = machine_id
+                    state['cycle'] = cycle
+                    telemetry.append(state)
+                    timestamp = datetime(
+                        timestamp.year, timestamp.month, timestamp.day,
+                        timestamp.hour, timestamp.minute, 
+                        timestamp.second + 1
+                    )
+                    
+                # Cooldown period
+                turbine.set_speed(0)
+                for _ in range(30):
+                    state = turbine.next_state()
+                    state['timestamp'] = timestamp.isoformat()
+                    state['machineID'] = machine_id
+                    state['cycle'] = cycle
+                    telemetry.append(state)
+                    
+        except Exception as e:
+            failures.append({
+                'timestamp': timestamp.isoformat(),
+                'machineID': machine_id,
+                'level': 'CRITICAL',
+                'code': str(e),
+                'message': GasTurbineHealthModel.FAILURE_MODES.get(
+                    str(e), 'Unknown failure'
+                )
+            })
+            
+    return telemetry, failures
+
+if __name__ == '__main__':
+    # Example usage
+    print("Gas Turbine Simulator - Example Run")
+    
+    # Create a turbine with slightly degraded initial state
+    gt = GasTurbine(
+        name="GT-001",
+        initial_health={
+            'hgp': 0.85,
+            'blade': 0.90,
+            'bearing': 0.80,
+            'fuel': 0.88
+        }
+    )
+    
+    # Run a short simulation
+    print("\nStarting turbine to 9500 RPM...")
+    gt.set_speed(9500)
+    
+    for i in range(10):
+        try:
+            state = gt.next_state()
+            print(f"t={i}: Speed={state['speed']:.0f} RPM, "
+                  f"EGT={state['exhaust_gas_temp']:.1f}°C, "
+                  f"Vib={state['vibration_rms']:.3f} mm/s, "
+                  f"Health(bearing)={state['health_bearing']:.3f}")
+        except Exception as e:
+            print(f"FAILURE: {e}")
+            break
+            
+    print("\nDone.")

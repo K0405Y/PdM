@@ -1,0 +1,757 @@
+"""
+Centrifugal Data Compressor Simulator 
+
+This module simulates an industrial centrifugal compressor typical of pipeline
+networks, LNG facilities, and refinery process units. Centrifugal compressors 
+are critical high-speed rotating equipment requiring sophisticated surge 
+protection and condition monitoring.
+
+Key Features:
+- Surge margin monitoring and anti-surge control simulation
+- Dry gas seal health tracking (primary and secondary seals)
+- Shaft orbit and displacement simulation via proximity probes
+- Multi-mode degradation: seal wear, impeller fouling, bearing degradation
+- Performance map simulation for thermodynamic efficiency
+
+Reference: API 670, API 617, Bently Nevada System 1, industry operational data
+"""
+
+import numpy as np
+import random
+import math
+from datetime import datetime
+from typing import Tuple
+
+class SurgeModel:
+    """
+    Models the surge characteristics of a centrifugal compressor.
+    
+    Surge is the most dangerous operational event - a violent flow reversal
+    that can damage impellers and thrust bearings. This model tracks the
+    surge margin and simulates approach to surge conditions.
+    """
+    
+    def __init__(self, 
+                 design_flow: float = 1000.0,
+                 design_head: float = 8000.0,
+                 surge_margin_alarm: float = 10.0,
+                 surge_margin_trip: float = 5.0):
+        """
+        Initialize surge model.
+        
+        Args:
+            design_flow: Design volumetric flow rate (m³/hr)
+            design_head: Design polytropic head (kJ/kg)
+            surge_margin_alarm: Alarm threshold (% from surge line)
+            surge_margin_trip: Trip threshold (% from surge line)
+        """
+        self.design_flow = design_flow
+        self.design_head = design_head
+        self.surge_margin_alarm = surge_margin_alarm
+        self.surge_margin_trip = surge_margin_trip
+        
+        # Surge line coefficients (parabolic approximation)
+        # head_surge = a * flow^2 + b * flow + c
+        self._a = 0.005
+        self._b = -2.0
+        self._c = design_head * 1.2
+        
+    def calculate_surge_flow(self, head: float) -> float:
+        """
+        Calculate the flow rate at surge for a given head.
+        
+        Args:
+            head: Current polytropic head (kJ/kg)
+            
+        Returns:
+            float: Flow rate at surge point (m³/hr)
+        """
+        # Solve quadratic: a*Q^2 + b*Q + (c - head) = 0
+        discriminant = self._b**2 - 4 * self._a * (self._c - head)
+        if discriminant < 0:
+            return 0.0
+        return (-self._b - math.sqrt(discriminant)) / (2 * self._a)
+    
+    def calculate_surge_margin(self, flow: float, head: float) -> float:
+        """
+        Calculate current surge margin as percentage.
+        
+        Args:
+            flow: Current volumetric flow rate (m³/hr)
+            head: Current polytropic head (kJ/kg)
+            
+        Returns:
+            float: Surge margin (%) - positive is safe, <0 is in surge
+        """
+        surge_flow = self.calculate_surge_flow(head)
+        if surge_flow <= 0:
+            return 100.0  # Far from surge
+        return ((flow - surge_flow) / surge_flow) * 100.0
+    
+    def is_surge_alarm(self, margin: float) -> bool:
+        """Check if surge margin is in alarm condition."""
+        return margin < self.surge_margin_alarm
+    
+    def is_surge_trip(self, margin: float) -> bool:
+        """Check if surge margin requires trip."""
+        return margin < self.surge_margin_trip
+
+class DryGasSealModel:
+    """
+    Models dry gas seal health and leakage for centrifugal compressors.
+    
+    Dry gas seals are critical for preventing process gas leakage along
+    the compressor shaft. Primary and secondary seal health are tracked
+    independently.
+    """
+    
+    SEAL_TYPES = ['primary', 'secondary']
+    
+    def __init__(self, initial_health: dict = None):
+        """
+        Initialize dry gas seal model.
+        
+        Args:
+            initial_health: Dict with 'primary' and 'secondary' health (0-1)
+        """
+        self.health = initial_health or {
+            'primary': 0.95,
+            'secondary': 0.98
+        }
+        
+        # Degradation rates (fraction per operating hour at severity 1.0)
+        self.degradation_rates = {
+            'primary': 0.00005,   # Primary degrades faster
+            'secondary': 0.00002
+        }
+        
+        # Leakage model parameters
+        self.base_leakage = {
+            'primary': 2.0,    # Nm³/hr baseline
+            'secondary': 0.5
+        }
+        
+        # Failure thresholds
+        self.failure_threshold = 0.25
+        
+    def step(self, 
+             operating_severity: float = 1.0,
+             contamination_factor: float = 1.0) -> dict:
+        """
+        Advance seal degradation by one hour.
+        
+        Args:
+            operating_severity: Multiplier for degradation rate
+            contamination_factor: Additional factor for dirty gas
+            
+        Returns:
+            dict: Current health and leakage values
+            
+        Raises:
+            Exception: When seal fails below threshold
+        """
+        result = {}
+        
+        for seal_type in self.SEAL_TYPES:
+            # Apply degradation
+            rate = self.degradation_rates[seal_type]
+            effective_rate = rate * operating_severity * contamination_factor
+            self.health[seal_type] -= effective_rate
+            
+            # Check for failure
+            if self.health[seal_type] < self.failure_threshold:
+                raise Exception(f"F_SEAL_{seal_type.upper()}")
+            
+            # Calculate leakage based on health
+            health_factor = 1.0 / max(self.health[seal_type], 0.1)
+            leakage = self.base_leakage[seal_type] * health_factor
+            
+            result[f'{seal_type}_health'] = self.health[seal_type]
+            result[f'{seal_type}_leakage'] = leakage
+            
+        return result
+
+
+class ShaftOrbitModel:
+    """
+    Simulates shaft displacement and orbit patterns measured by 
+    orthogonal proximity probes.
+    
+    Shaft orbit analysis reveals rotor unbalance, misalignment, rub,
+    and bearing condition through characteristic patterns.
+    """
+    
+    def __init__(self, 
+                 bearing_clearance: float = 0.15,  # mm
+                 sample_rate: int = 1024):
+        """
+        Initialize shaft orbit model.
+        
+        Args:
+            bearing_clearance: Radial bearing clearance (mm)
+            sample_rate: Samples per second (Hz)
+        """
+        self.bearing_clearance = bearing_clearance
+        self.sample_rate = sample_rate
+        self.phase = 0.0
+        
+    def generate_orbit(self,
+                       rpm: float,
+                       health_state: dict,
+                       duration: float = 1.0) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Generate X-Y displacement signals for shaft orbit.
+        
+        Args:
+            rpm: Current rotor speed (RPM)
+            health_state: Dict with health indicators
+            duration: Signal duration in seconds
+            
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: X and Y displacement signals (mm)
+        """
+        if rpm <= 0:
+            n_samples = int(self.sample_rate * duration)
+            noise_x = np.random.normal(0, 0.001, n_samples)
+            noise_y = np.random.normal(0, 0.001, n_samples)
+            return noise_x, noise_y
+            
+        n_samples = int(self.sample_rate * duration)
+        t = np.linspace(0, duration, n_samples, endpoint=False)
+        
+        omega = 2 * np.pi * rpm / 60.0  # rad/s
+        
+        # Base orbit (healthy machine - slightly elliptical)
+        base_radius = 0.02  # mm - small orbit when healthy
+        ellipticity = 0.2   # Slight ellipse
+        
+        # Scale orbit with degradation
+        impeller_health = health_state.get('impeller', 1.0)
+        bearing_health = health_state.get('bearing', 1.0)
+        
+        # Unbalance increases orbit size
+        unbalance_factor = 1.0 + 2.0 * (1.0 - impeller_health)
+        
+        # Bearing wear increases orbit size and introduces harmonics
+        wear_factor = 1.0 + 3.0 * (1.0 - bearing_health)
+        
+        orbit_radius = base_radius * unbalance_factor * wear_factor
+        
+        # Generate orbit signals
+        x = orbit_radius * np.cos(omega * t + self.phase)
+        y = orbit_radius * (1 - ellipticity) * np.sin(omega * t + self.phase)
+        
+        # Add sub-synchronous whirl if bearing is degraded (oil whirl/whip)
+        if bearing_health < 0.6:
+            whirl_freq = 0.43 * omega  # Characteristic oil whirl frequency
+            whirl_amp = (0.6 - bearing_health) * 0.05
+            x += whirl_amp * np.cos(whirl_freq * t)
+            y += whirl_amp * np.sin(whirl_freq * t)
+            
+        # Add super-synchronous content if impeller damaged
+        if impeller_health < 0.7:
+            # Blade pass frequency effects
+            n_blades = 8  # Typical impeller blade count
+            blade_freq = n_blades * omega
+            blade_amp = (0.7 - impeller_health) * 0.01
+            x += blade_amp * np.cos(blade_freq * t)
+            y += blade_amp * np.sin(blade_freq * t)
+            
+        # Add noise
+        x += np.random.normal(0, 0.002, n_samples)
+        y += np.random.normal(0, 0.002, n_samples)
+        
+        # Update phase for continuity
+        self.phase = (self.phase + omega * duration) % (2 * np.pi)
+        
+        return x, y
+    
+    def compute_metrics(self, 
+                        x: np.ndarray, 
+                        y: np.ndarray) -> dict:
+        """
+        Compute shaft orbit metrics.
+        
+        Args:
+            x: X-axis displacement signal
+            y: Y-axis displacement signal
+            
+        Returns:
+            dict: Orbit metrics including amplitude, gap, and synchronous amplitude
+        """
+        # Direct orbit amplitude (peak-to-peak)
+        smax = np.sqrt(x**2 + y**2).max()
+        
+        # Average position
+        x_avg = np.mean(x)
+        y_avg = np.mean(y)
+        gap = np.sqrt(x_avg**2 + y_avg**2)
+        
+        # 1X synchronous amplitude (approximate)
+        sync_amp = np.sqrt(np.var(x) + np.var(y)) * 2
+        
+        return {
+            'orbit_amplitude': round(smax * 2, 4),  # Peak-to-peak (mm)
+            'average_gap': round(gap, 4),           # mm
+            'sync_amplitude': round(sync_amp, 4)    # mm
+        }
+
+
+class CentrifugalCompressorHealthModel:
+    """
+    Manages degradation pathways specific to centrifugal compressors.
+    """
+    
+    FAILURE_MODES = {
+        'F_IMPELLER': 'Impeller Degradation - Erosion or fouling',
+        'F_BEARING': 'Bearing Failure - Journal or thrust bearing damage',
+        'F_SEAL_PRIMARY': 'Primary Dry Gas Seal Failure',
+        'F_SEAL_SECONDARY': 'Secondary Dry Gas Seal Failure',
+        'F_SURGE': 'Surge Event - Violent flow reversal'
+    }
+    
+    def __init__(self, initial_health: dict = None):
+        """
+        Initialize health model.
+        
+        Args:
+            initial_health: Dict with 'impeller', 'bearing' health values
+        """
+        self.health = initial_health or {
+            'impeller': 0.92,
+            'bearing': 0.88
+        }
+        
+        # Degradation parameters (d, a, b) for h(t) = 1 - d - exp(a*t^b)
+        self.degradation_params = {
+            'impeller': (0.04, -0.28, 0.21),
+            'bearing': (0.06, -0.32, 0.24)
+        }
+        
+        self.failure_thresholds = {
+            'impeller': 0.42,
+            'bearing': 0.38
+        }
+        
+        self._init_generators()
+        
+    def _init_generators(self):
+        """Initialize health trajectory generators."""
+        self._generators = {}
+        for mode, (d, a, b) in self.degradation_params.items():
+            current_h = self.health[mode]
+            threshold = self.failure_thresholds[mode]
+            try:
+                ttf = math.pow(math.log(1 - d - current_h) / a, 1 / b)
+            except (ValueError, ZeroDivisionError):
+                ttf = 1000
+            self._generators[mode] = self._health_generator(ttf, d, a, b, threshold)
+            
+    def _health_generator(self, ttf, d, a, b, threshold):
+        """Generator yielding health values over time."""
+        for t in range(int(ttf), -1, -1):
+            h = 1 - d - math.exp(a * t**b)
+            if h < threshold:
+                break
+            yield t, h
+            
+    def step(self, operating_severity: float = 1.0) -> dict:
+        """
+        Advance health model by one time step.
+        
+        Returns:
+            dict: Current health values
+            
+        Raises:
+            Exception: With failure mode code on failure
+        """
+        updated_health = {}
+        
+        for mode, gen in self._generators.items():
+            try:
+                if operating_severity > 1.0 and random.random() < (operating_severity - 1.0):
+                    next(gen)
+                t_remaining, h = next(gen)
+                self.health[mode] = h
+                updated_health[mode] = h
+            except StopIteration:
+                raise Exception(f"F_{mode.upper()}")
+                
+        return updated_health
+
+
+class CentrifugalCompressor:
+    """
+    Industrial Centrifugal Compressor Simulator for Predictive Maintenance.
+    
+    Simulates a centrifugal compressor typical of pipeline networks and LNG
+    facilities with realistic operating parameters, surge protection, and
+    dry gas seal monitoring.
+    
+    Operating Envelope (based on industrial data):
+    - Speed: 5,000 - 25,000 RPM (varies by design)
+    - Suction Pressure: 500 - 5,000 kPa
+    - Discharge Pressure: 2,000 - 15,000 kPa
+    - Flow Rate: 100 - 5,000 m³/hr
+    - Vibration (shaft): 0.025 - 0.075 mm (API 617)
+    """
+    
+    LIMITS = {
+        'speed_min': 5000,
+        'speed_max': 25000,
+        'speed_rated': 12000,
+        'suction_pressure_min': 500,    # kPa
+        'suction_pressure_max': 5000,
+        'discharge_pressure_max': 15000,
+        'flow_min': 100,                 # m³/hr
+        'flow_max': 3000,
+        'flow_rated': 1500,
+        'vibration_alarm': 0.050,        # mm
+        'vibration_trip': 0.075,         # mm (API 617)
+        'bearing_temp_max': 110,         # °C
+        'seal_leakage_alarm': 5.0,       # Nm³/hr
+    }
+    
+    def __init__(self,
+                 name: str,
+                 initial_health: dict = None,
+                 design_flow: float = 1500.0,
+                 design_head: float = 8000.0,
+                 suction_pressure: float = 2000.0,
+                 suction_temp: float = 35.0):
+        """
+        Initialize centrifugal compressor simulator.
+        
+        Args:
+            name: Unique identifier
+            initial_health: Dict with initial health values
+            design_flow: Design volumetric flow (m³/hr)
+            design_head: Design polytropic head (kJ/kg)
+            suction_pressure: Suction pressure (kPa)
+            suction_temp: Suction temperature (°C)
+        """
+        self.name = name
+        self.design_flow = design_flow
+        self.design_head = design_head
+        
+        # Process conditions
+        self.suction_pressure = suction_pressure
+        self.suction_temp = suction_temp
+        self.discharge_pressure = suction_pressure  # Will be calculated
+        self.discharge_temp = suction_temp
+        
+        # Operating state
+        self.speed = 0.0
+        self.speed_target = 0.0
+        self.flow = 0.0
+        self.head = 0.0
+        
+        # Component models
+        self.health_model = CentrifugalCompressorHealthModel(initial_health)
+        self.surge_model = SurgeModel(design_flow, design_head)
+        self.seal_model = DryGasSealModel()
+        self.orbit_model = ShaftOrbitModel()
+        
+        # Bearing temperatures
+        self.bearing_temp_de = 45.0  # Drive end
+        self.bearing_temp_nde = 45.0  # Non-drive end
+        self.thrust_bearing_temp = 50.0
+        
+        # Performance
+        self.efficiency = 0.82
+        self.power = 0.0
+        
+        # Time tracking
+        self.operating_hours = 0.0
+        self.t = 0
+        
+    def set_speed(self, target_rpm: float):
+        """Set target operating speed."""
+        self.speed_target = max(0, min(target_rpm, self.LIMITS['speed_max']))
+        
+    def set_flow(self, target_flow: float):
+        """Set target flow rate (will adjust speed accordingly)."""
+        self.flow_target = max(0, min(target_flow, self.LIMITS['flow_max']))
+        
+    def _calculate_operating_severity(self) -> float:
+        """Calculate severity based on operating conditions."""
+        speed_factor = self.speed / self.LIMITS['speed_rated']
+        flow_factor = self.flow / self.LIMITS['flow_rated'] if self.LIMITS['flow_rated'] > 0 else 1.0
+        
+        severity = 1.0
+        if speed_factor > 1.0:
+            severity *= (1.0 + 0.4 * (speed_factor - 1.0)**2)
+        
+        # Operating near surge increases severity
+        surge_margin = self.surge_model.calculate_surge_margin(self.flow, self.head)
+        if surge_margin < 20:
+            severity *= (1.0 + 0.3 * (20 - surge_margin) / 20)
+            
+        return severity
+    
+    def _update_process(self, health_state: dict):
+        """Update process conditions based on operating state and health."""
+        if self.speed <= 0:
+            self.flow = 0
+            self.head = 0
+            self.discharge_pressure = self.suction_pressure
+            self.discharge_temp = self.suction_temp
+            self.power = 0
+            return
+            
+        # Flow is proportional to speed (affinity laws)
+        speed_ratio = self.speed / self.LIMITS['speed_rated']
+        self.flow = self.design_flow * speed_ratio
+        
+        # Head is proportional to speed squared (affinity laws)
+        impeller_health = health_state.get('impeller', 1.0)
+        head_degradation = 0.9 + 0.1 * impeller_health  # Up to 10% head loss
+        self.head = self.design_head * (speed_ratio ** 2) * head_degradation
+        
+        # Calculate discharge conditions
+        # Simplified: assume polytropic process
+        gamma = 1.3  # Typical for natural gas
+        pressure_ratio = 1 + (self.head / (1000 * gamma / (gamma - 1) * (self.suction_temp + 273.15) * 8.314 / 18))
+        pressure_ratio = max(1.0, min(pressure_ratio, 5.0))  # Limit ratio
+        
+        self.discharge_pressure = self.suction_pressure * pressure_ratio
+        self.discharge_temp = (self.suction_temp + 273.15) * (pressure_ratio ** ((gamma - 1) / gamma)) - 273.15
+        
+        # Efficiency degrades with impeller condition
+        self.efficiency = 0.75 + 0.10 * impeller_health
+        
+        # Power calculation (simplified)
+        mass_flow = self.flow * 0.8  # Approximate mass flow (kg/hr assuming ~0.8 kg/m³)
+        self.power = (mass_flow * self.head) / (3600 * self.efficiency)  # kW
+        
+    def _update_bearings(self, health_state: dict):
+        """Update bearing temperatures based on load and health."""
+        if self.speed <= 0:
+            ambient = 35.0
+            self.bearing_temp_de = self._approach(self.bearing_temp_de, ambient, 0.02)
+            self.bearing_temp_nde = self._approach(self.bearing_temp_nde, ambient, 0.02)
+            self.thrust_bearing_temp = self._approach(self.thrust_bearing_temp, ambient, 0.02)
+            return
+            
+        bearing_health = health_state.get('bearing', 1.0)
+        load_factor = self.speed / self.LIMITS['speed_rated']
+        
+        # Base temperature rise from load
+        base_temp = 45 + 30 * load_factor
+        
+        # Friction heating from degraded bearings
+        friction_penalty = (1.0 - bearing_health) * 40
+        
+        target_de = base_temp + friction_penalty + random.gauss(0, 1)
+        target_nde = base_temp + friction_penalty * 0.8 + random.gauss(0, 1)
+        target_thrust = base_temp + friction_penalty * 1.2 + random.gauss(0, 1)
+        
+        self.bearing_temp_de = self._approach(self.bearing_temp_de, target_de, 0.1)
+        self.bearing_temp_nde = self._approach(self.bearing_temp_nde, target_nde, 0.1)
+        self.thrust_bearing_temp = self._approach(self.thrust_bearing_temp, target_thrust, 0.1)
+        
+    def _approach(self, current: float, target: float, rate: float) -> float:
+        """Exponential approach to target."""
+        return current + (target - current) * rate
+    
+    def _add_noise(self, value: float, magnitude: float) -> float:
+        """Add measurement noise."""
+        return value + random.gauss(0, magnitude)
+        
+    def next_state(self) -> dict:
+        """
+        Advance simulation by one time step.
+        
+        Returns:
+            dict: Current telemetry values
+            
+        Raises:
+            Exception: With failure code on critical failure
+        """
+        # Update speed toward target
+        speed_rate = 0.08 if self.speed_target > self.speed else 0.12
+        self.speed = self._approach(self.speed, self.speed_target, speed_rate)
+        
+        # Calculate operating severity
+        severity = self._calculate_operating_severity()
+        
+        # Advance health model
+        health_state = self.health_model.step(severity)
+        
+        # Update process conditions
+        self._update_process(health_state)
+        
+        # Check surge
+        surge_margin = self.surge_model.calculate_surge_margin(self.flow, self.head)
+        if self.surge_model.is_surge_trip(surge_margin) and self.speed > 0:
+            raise Exception("F_SURGE")
+            
+        # Update seal condition (convert time step to hours)
+        seal_state = self.seal_model.step(severity / 3600)
+        
+        # Update bearings
+        self._update_bearings(health_state)
+        
+        # Check bearing temperature trip
+        if max(self.bearing_temp_de, self.bearing_temp_nde, self.thrust_bearing_temp) > self.LIMITS['bearing_temp_max']:
+            raise Exception("F_BEARING_TEMP")
+            
+        # Generate shaft orbit
+        x_disp, y_disp = self.orbit_model.generate_orbit(self.speed, health_state)
+        orbit_metrics = self.orbit_model.compute_metrics(x_disp, y_disp)
+        
+        # Check vibration trip
+        if orbit_metrics['orbit_amplitude'] > self.LIMITS['vibration_trip'] * 2:
+            raise Exception("F_HIGH_VIBRATION")
+            
+        # Update operating hours
+        if self.speed > 0:
+            self.operating_hours += 1/3600
+            
+        self.t += 1
+        
+        # Build telemetry message
+        state = {
+            'speed': round(self._add_noise(self.speed, 10), 2),
+            'speed_target': round(self.speed_target, 2),
+            'flow': round(self._add_noise(self.flow, 5), 2),
+            'head': round(self._add_noise(self.head, 20), 2),
+            'suction_pressure': round(self._add_noise(self.suction_pressure, 5), 2),
+            'discharge_pressure': round(self._add_noise(self.discharge_pressure, 10), 2),
+            'suction_temp': round(self._add_noise(self.suction_temp, 0.2), 2),
+            'discharge_temp': round(self._add_noise(self.discharge_temp, 0.5), 2),
+            'surge_margin': round(surge_margin, 2),
+            'surge_alarm': self.surge_model.is_surge_alarm(surge_margin),
+            'bearing_temp_de': round(self._add_noise(self.bearing_temp_de, 0.3), 2),
+            'bearing_temp_nde': round(self._add_noise(self.bearing_temp_nde, 0.3), 2),
+            'thrust_bearing_temp': round(self._add_noise(self.thrust_bearing_temp, 0.3), 2),
+            'shaft_x_displacement': round(orbit_metrics['orbit_amplitude'] / 2, 4),
+            'shaft_y_displacement': round(orbit_metrics['orbit_amplitude'] / 2 * 0.95, 4),
+            'orbit_amplitude': round(orbit_metrics['orbit_amplitude'], 4),
+            'sync_amplitude': round(orbit_metrics['sync_amplitude'], 4),
+            'primary_seal_leakage': round(seal_state['primary_leakage'], 3),
+            'secondary_seal_leakage': round(seal_state['secondary_leakage'], 3),
+            'efficiency': round(self.efficiency, 4),
+            'power': round(self._add_noise(self.power, 5), 2),
+            'operating_hours': round(self.operating_hours, 2),
+            'health_impeller': round(health_state['impeller'], 4),
+            'health_bearing': round(health_state['bearing'], 4),
+            'health_seal_primary': round(seal_state['primary_health'], 4),
+            'health_seal_secondary': round(seal_state['secondary_health'], 4),
+        }
+        
+        return state
+
+
+def generate_compressor_dataset(
+    n_machines: int = 5,
+    n_cycles_per_machine: int = 100,
+    cycle_duration_range: tuple = (120, 600),
+    random_seed: int = None
+) -> tuple:
+    """
+    Generate run-to-failure dataset for multiple centrifugal compressors.
+    
+    Args:
+        n_machines: Number of compressors to simulate
+        n_cycles_per_machine: Operating cycles per compressor
+        cycle_duration_range: (min, max) seconds per cycle
+        random_seed: Seed for reproducibility
+        
+    Returns:
+        tuple: (telemetry_records, failure_records)
+    """
+    if random_seed is not None:
+        random.seed(random_seed)
+        np.random.seed(random_seed)
+        
+    telemetry = []
+    failures = []
+    
+    for m in range(n_machines):
+        machine_id = f"CC-{m+1:03d}"
+        
+        initial_health = {
+            'impeller': random.uniform(0.75, 0.98),
+            'bearing': random.uniform(0.70, 0.95)
+        }
+        
+        compressor = CentrifugalCompressor(
+            machine_id,
+            initial_health,
+            design_flow=random.uniform(1200, 1800),
+            design_head=random.uniform(7000, 9000)
+        )
+        timestamp = datetime.now()
+        
+        try:
+            for cycle in range(n_cycles_per_machine):
+                duration = random.randint(*cycle_duration_range)
+                target_speed = random.uniform(9000, 15000)
+                
+                compressor.set_speed(target_speed)
+                
+                for _ in range(duration):
+                    state = compressor.next_state()
+                    state['timestamp'] = timestamp.isoformat()
+                    state['machineID'] = machine_id
+                    state['cycle'] = cycle
+                    telemetry.append(state)
+                    timestamp = datetime(
+                        timestamp.year, timestamp.month, timestamp.day,
+                        timestamp.hour, timestamp.minute,
+                        timestamp.second + 1
+                    )
+                    
+                # Shutdown period
+                compressor.set_speed(0)
+                for _ in range(60):
+                    state = compressor.next_state()
+                    state['timestamp'] = timestamp.isoformat()
+                    state['machineID'] = machine_id
+                    state['cycle'] = cycle
+                    telemetry.append(state)
+                    
+        except Exception as e:
+            failures.append({
+                'timestamp': timestamp.isoformat(),
+                'machineID': machine_id,
+                'level': 'CRITICAL',
+                'code': str(e),
+                'message': CentrifugalCompressorHealthModel.FAILURE_MODES.get(
+                    str(e), 'Unknown failure'
+                )
+            })
+            
+    return telemetry, failures
+
+
+if __name__ == '__main__':
+    print("Centrifugal Compressor Simulator - Example Run")
+    print("=" * 50)
+    
+    cc = CentrifugalCompressor(
+        name="CC-001",
+        initial_health={
+            'impeller': 0.88,
+            'bearing': 0.82
+        },
+        design_flow=1500,
+        design_head=8000
+    )
+    
+    print("\nStarting compressor to 12000 RPM...")
+    cc.set_speed(12000)
+    
+    for i in range(10):
+        try:
+            state = cc.next_state()
+            print(f"t={i}: Speed={state['speed']:.0f} RPM, "
+                  f"Flow={state['flow']:.0f} m³/hr, "
+                  f"Surge Margin={state['surge_margin']:.1f}%, "
+                  f"Orbit={state['orbit_amplitude']:.4f} mm")
+        except Exception as e:
+            print(f"FAILURE: {e}")
+            break
+            
+    print("\nDone.")
