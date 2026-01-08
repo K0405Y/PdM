@@ -16,7 +16,7 @@ Reference: API 670, turbine startup procedures, thermal stress analysis
 
 import numpy as np
 from enum import Enum
-from typing import Dict, Tuple
+from typing import Dict
 from dataclasses import dataclass
 
 
@@ -35,22 +35,19 @@ class OperatingMode(Enum):
 class ThermalMassProperties:
     """Thermal properties for equipment components."""
     # Time constants (minutes) - how fast component reaches thermal equilibrium
-    tau_bearing: float = 8.0        # Fast response (small thermal mass)
-    tau_casing: float = 25.0        # Medium response
-    tau_rotor: float = 45.0         # Slow response (large thermal mass)
-
+    tau_bearing: float = 8.0        
+    tau_casing: float = 25.0        
+    tau_rotor: float = 45.0       
     # Maximum safe differential temperature (°C)
     max_differential: float = 80.0
 
     # Thermal stress factor (dimensionless stress per °C differential)
     stress_per_deg: float = 0.015
 
-
 class ThermalTransientModel:
     """
     Models thermal behavior during equipment transients.
     """
-
     def __init__(self,
                  ambient_temp: float = 25.0,
                  thermal_properties: ThermalMassProperties = None):
@@ -61,7 +58,7 @@ class ThermalTransientModel:
             ambient_temp: Ambient temperature (°C)
             thermal_properties: Component thermal properties
         """
-        self.ambient_temp = ambient_temp
+        self.ambient_temp = ambient_temp 
         self.props = thermal_properties or ThermalMassProperties()
 
         # Current component temperatures
@@ -299,7 +296,6 @@ class ThermalTransientModel:
             'differential_C': abs(self.temp_rotor - self.temp_casing),
             'startup_cycles': self._startup_count
         }
-
 
 if __name__ == '__main__':
     """Demonstration of thermal transient behavior."""

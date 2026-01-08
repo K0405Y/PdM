@@ -21,6 +21,7 @@ from .environmental_conditions import (
     EnvironmentalConditions,
     LocationType,
     EnvironmentalProfile,
+    SeasonalPattern,
     LOCATION_PROFILES
 )
 
@@ -34,5 +35,6 @@ __all__ = [
     'EnvironmentalConditions',
     'LocationType',
     'EnvironmentalProfile',
+    'SeasonalPattern',
     'LOCATION_PROFILES'
 ]

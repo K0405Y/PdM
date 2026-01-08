@@ -1,6 +1,7 @@
 .venv
 .env
-.claude
+.claude/
 __pycache__/
 *.py[cod]
 *$py.class
+.vscode/

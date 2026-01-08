@@ -15,59 +15,88 @@ Reference: ISO atmospheric conditions, offshore environmental data
 
 import numpy as np
 from enum import Enum
-from typing import Dict
-from dataclasses import dataclass
+from typing import Dict, List
+from dataclasses import dataclass, field
 
 
 class LocationType(Enum):
     """Installation location types with distinct environmental characteristics."""
-    OFFSHORE = "offshore"          
-    DESERT = "desert"              
-    ARCTIC = "arctic"             
-    TROPICAL = "tropical"          
-    TEMPERATE = "temperate"    
+    OFFSHORE = "offshore"
+    DESERT = "desert"
+    ARCTIC = "arctic"
+    TROPICAL = "tropical"
+    TEMPERATE = "temperate"
+
+
+@dataclass
+class SeasonalPattern:
+    """
+    Defines seasonal behavior for a location.
+    Allows modeling of 2-season (monsoon), 3-season, or 4-season patterns
+    using multiple sinusoidal components with location-specific peaks.
+    """
+    hemisphere: str = "northern"  # "northern" or "southern"
+    season_peaks: List[int] = field(default_factory=list)  # Days of year for temperature peaks/troughs
+    season_amplitudes: List[float] = field(default_factory=list)  # Amplitude for each component (°C)
+
+    def __post_init__(self):
+        """Validate seasonal pattern configuration."""
+        if len(self.season_peaks) != len(self.season_amplitudes):
+            raise ValueError("season_peaks and season_amplitudes must have same length")
+        if self.hemisphere not in ["northern", "southern"]:
+            raise ValueError("hemisphere must be 'northern' or 'southern'")
 
 
 @dataclass
 class EnvironmentalProfile:
     """Environmental characteristics for a location type."""
     # Temperature parameters (°C)
-    temp_annual_mean: float        
-    temp_daily_amplitude: float    
-    temp_seasonal_amplitude: float 
+    temp_annual_mean: float
+    temp_daily_amplitude: float
+
+    # Seasonal pattern (replaces simple temp_seasonal_amplitude)
+    seasonal_pattern: SeasonalPattern = None
 
     # Humidity parameters (% relative humidity)
-    humidity_mean: float
-    humidity_variation: float
+    humidity_mean: float = 65.0
+    humidity_variation: float = 15.0
 
     # Pressure parameters (kPa)
-    pressure_mean: float
-    pressure_variation: float
+    pressure_mean: float = 101.3
+    pressure_variation: float = 3.0
 
     # Special factors
-    salt_exposure: float           
-    dust_exposure: float           
-    ice_risk: float                
+    salt_exposure: float = 0.1
+    dust_exposure: float = 0.1
+    ice_risk: float = 0.1                
 
 # Predefined location profiles
 LOCATION_PROFILES = {
     LocationType.OFFSHORE: EnvironmentalProfile(
         temp_annual_mean=15.0,
-        temp_daily_amplitude=3.0,      
-        temp_seasonal_amplitude=10.0,  
+        temp_daily_amplitude=3.0,
+        seasonal_pattern=SeasonalPattern(
+            hemisphere="northern",
+            season_peaks=[355, 182],  # Winter minimum (late Dec), Summer maximum (early July)
+            season_amplitudes=[-10.0, 10.0]  # Cold winter, warm summer
+        ),
         humidity_mean=75.0,
         humidity_variation=10.0,
         pressure_mean=101.3,
         pressure_variation=3.0,
-        salt_exposure=0.9,             
-        dust_exposure=0.1,             
+        salt_exposure=0.9,
+        dust_exposure=0.1,
         ice_risk=0.2
     ),
 
     LocationType.DESERT: EnvironmentalProfile(
         temp_annual_mean=30.0,
-        temp_daily_amplitude=18.0,     
-        temp_seasonal_amplitude=15.0,  
+        temp_daily_amplitude=18.0,
+        seasonal_pattern=SeasonalPattern(
+            hemisphere="northern",
+            season_peaks=[15, 195],  # Winter (mid-Jan), Summer (mid-July)
+            season_amplitudes=[-15.0, 15.0]  # Cold winter nights, extreme summer heat
+        ),
         humidity_mean=20.0,
         humidity_variation=15.0,
         pressure_mean=100.5,
@@ -80,20 +109,28 @@ LOCATION_PROFILES = {
     LocationType.ARCTIC: EnvironmentalProfile(
         temp_annual_mean=-15.0,
         temp_daily_amplitude=5.0,
-        temp_seasonal_amplitude=25.0,  # Extreme seasonal variation
+        seasonal_pattern=SeasonalPattern(
+            hemisphere="northern",
+            season_peaks=[1, 172],  # Polar winter (Jan 1), Short summer (Jun 21)
+            season_amplitudes=[-25.0, 25.0]  # Extreme: -40°C winter, +10°C summer
+        ),
         humidity_mean=60.0,
         humidity_variation=20.0,
         pressure_mean=102.0,
         pressure_variation=5.0,
         salt_exposure=0.3,
         dust_exposure=0.1,
-        ice_risk=0.95                  # Extreme ice risk
+        ice_risk=0.95
     ),
 
     LocationType.TROPICAL: EnvironmentalProfile(
         temp_annual_mean=28.0,
         temp_daily_amplitude=7.0,
-        temp_seasonal_amplitude=3.0,   # Minimal seasonal variation
+        seasonal_pattern=SeasonalPattern(
+            hemisphere="northern",
+            season_peaks=[60, 240],  # Wet season (Mar), Dry season (Sep)
+            season_amplitudes=[3.0, -3.0]  # Minimal temperature change, humidity-driven seasons
+        ),
         humidity_mean=85.0,
         humidity_variation=10.0,
         pressure_mean=101.0,
@@ -106,7 +143,11 @@ LOCATION_PROFILES = {
     LocationType.TEMPERATE: EnvironmentalProfile(
         temp_annual_mean=12.0,
         temp_daily_amplitude=8.0,
-        temp_seasonal_amplitude=18.0,
+        seasonal_pattern=SeasonalPattern(
+            hemisphere="northern",
+            season_peaks=[20, 110, 200, 290],  # Winter, Spring, Summer, Fall
+            season_amplitudes=[-18.0, 0.0, 18.0, 0.0]  # Traditional 4-season pattern
+        ),
         humidity_mean=65.0,
         humidity_variation=15.0,
         pressure_mean=101.3,
@@ -174,15 +215,22 @@ class EnvironmentalConditions:
         """
         Calculate ambient temperature with daily and seasonal cycles.
 
-        T(t) = T_mean + A_daily*sin(2π*hour/24) + A_seasonal*sin(2π*day/365)
+        T(t) = T_mean + A_daily*sin(2π*hour/24) + Σ[A_i*sin(2π*(day-peak_i)/365)]
+
+        Uses location-specific seasonal patterns with multiple sinusoidal components
+        to model 2-season (monsoon), 3-season, or 4-season patterns.
         """
         # Daily cycle (peaks at ~2pm, minimum at ~4am)
         daily_phase = (self.hour_of_day - 4) / 24 * 2 * np.pi
         daily_component = self.profile.temp_daily_amplitude * np.sin(daily_phase)
 
-        # Seasonal cycle (peaks mid-summer, day ~200, minimum mid-winter, day ~20)
-        seasonal_phase = (self.day_of_year - 20) / 365 * 2 * np.pi
-        seasonal_component = self.profile.temp_seasonal_amplitude * np.sin(seasonal_phase)
+        # Seasonal cycle - sum of multiple sinusoidal components
+        seasonal_component = 0.0
+        if self.profile.seasonal_pattern:
+            pattern = self.profile.seasonal_pattern
+            for peak_day, amplitude in zip(pattern.season_peaks, pattern.season_amplitudes):
+                phase = (self.day_of_year - peak_day) / 365 * 2 * np.pi
+                seasonal_component += amplitude * np.sin(phase)
 
         # Random variation
         noise = np.random.normal(0, 1.0)
