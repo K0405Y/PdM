@@ -19,8 +19,24 @@ Reference: API 670, API 617, Bently Nevada System 1, industry operational data
 import numpy as np
 import random
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Tuple
+
+# Try to import enhancement modules
+ENHANCEMENTS_AVAILABLE = False
+try:
+    from .physics import (
+        EnhancedVibrationGenerator, BearingGeometry,
+        ThermalTransientModel, ThermalMassProperties,
+        EnvironmentalConditions, LocationType
+    )
+    from .simulation import (
+        MaintenanceScheduler, IncipientFaultSimulator, ProcessUpsetSimulator
+    )
+    from .ml_utils import DataOutputFormatter, OutputMode
+    ENHANCEMENTS_AVAILABLE = True
+except ImportError:
+    pass
 
 class SurgeModel:
     """
@@ -418,7 +434,15 @@ class CentrifugalCompressor:
                  design_flow: float = 1500.0,
                  design_head: float = 8000.0,
                  suction_pressure: float = 2000.0,
-                 suction_temp: float = 35.0):
+                 suction_temp: float = 35.0,
+                 location_type = None,
+                 enable_enhanced_vibration: bool = True,
+                 enable_thermal_transients: bool = True,
+                 enable_environmental: bool = True,
+                 enable_maintenance: bool = True,
+                 enable_incipient_faults: bool = True,
+                 enable_process_upsets: bool = True,
+                 output_mode = None):
         """
         Initialize centrifugal compressor simulator.
         
@@ -429,6 +453,14 @@ class CentrifugalCompressor:
             design_head: Design polytropic head (kJ/kg)
             suction_pressure: Suction pressure (kPa)
             suction_temp: Suction temperature (°C)
+            location_type: LocationType enum for environmental modeling
+            enable_enhanced_vibration: Use envelope-modulated vibration
+            enable_thermal_transients: Model thermal stress
+            enable_environmental: Include environmental variability
+            enable_maintenance: Enable maintenance events
+            enable_incipient_faults: Enable discrete fault initiation
+            enable_process_upsets: Enable process upset events
+            output_mode: Data output format mode
         """
         self.name = name
         self.design_flow = design_flow
@@ -464,6 +496,111 @@ class CentrifugalCompressor:
         # Time tracking
         self.operating_hours = 0.0
         self.t = 0
+        self.elapsed_hours = 0.0
+        self.current_timestamp = datetime.now()
+        
+        # Initialize enhancement features
+        if ENHANCEMENTS_AVAILABLE:
+            # Enhanced vibration generator
+            if enable_enhanced_vibration:
+                try:
+                    bearing_geom = BearingGeometry(
+                        n_balls=14, ball_diameter=18.0,
+                        pitch_diameter=90.0, contact_angle=0.0
+                    )
+                    self.vib_generator_enhanced = EnhancedVibrationGenerator(
+                        sample_rate=10240, resonance_freq=3000,
+                        bearing_geometry=bearing_geom
+                    )
+                    self.use_enhanced_vibration = True
+                except:
+                    self.use_enhanced_vibration = False
+            else:
+                self.use_enhanced_vibration = False
+            
+            # Thermal transient model
+            if enable_thermal_transients:
+                try:
+                    self.thermal_model = ThermalTransientModel(
+                        ambient_temp=25.0,
+                        thermal_properties=ThermalMassProperties(
+                            tau_bearing=6.0, tau_casing=20.0, tau_rotor=35.0
+                        )
+                    )
+                    self.use_thermal_model = True
+                except:
+                    self.use_thermal_model = False
+            else:
+                self.use_thermal_model = False
+            
+            # Environmental model
+            if enable_environmental:
+                try:
+                    self.env_model = EnvironmentalConditions(
+                        location_type=location_type or LocationType.TEMPERATE
+                    )
+                    self.use_environmental = True
+                except:
+                    self.use_environmental = False
+            else:
+                self.use_environmental = False
+            
+            # Maintenance scheduler
+            if enable_maintenance:
+                try:
+                    self.maint_scheduler = MaintenanceScheduler(
+                        enable_time_based=True,
+                        enable_condition_based=True,
+                        enable_opportunistic=True
+                    )
+                    self.use_maintenance = True
+                except:
+                    self.use_maintenance = False
+            else:
+                self.use_maintenance = False
+            
+            # Incipient fault simulator
+            if enable_incipient_faults:
+                try:
+                    self.fault_sim = IncipientFaultSimulator(
+                        enable_incipient_faults=True, fault_rate_per_1000hrs=0.4
+                    )
+                    self.use_faults = True
+                except:
+                    self.use_faults = False
+            else:
+                self.use_faults = False
+            
+            # Process upset simulator
+            if enable_process_upsets:
+                try:
+                    self.upset_sim = ProcessUpsetSimulator(
+                        enable_upsets=True, upset_rate_per_month=2.0
+                    )
+                    self.use_upsets = True
+                except:
+                    self.use_upsets = False
+            else:
+                self.use_upsets = False
+            
+            # Output formatter
+            if output_mode is not None:
+                try:
+                    self.output_formatter = DataOutputFormatter(output_mode=output_mode)
+                    self.use_output_formatter = True
+                except:
+                    self.use_output_formatter = False
+            else:
+                self.use_output_formatter = False
+        else:
+            # Enhancements not available
+            self.use_enhanced_vibration = False
+            self.use_thermal_model = False
+            self.use_environmental = False
+            self.use_maintenance = False
+            self.use_faults = False
+            self.use_upsets = False
+            self.use_output_formatter = False
         
     def set_speed(self, target_rpm: float):
         """Set target operating speed."""
@@ -562,6 +699,8 @@ class CentrifugalCompressor:
         """
         Advance simulation by one time step.
         
+        Conditionally applies enhancements based on initialization flags.
+        
         Returns:
             dict: Current telemetry values
             
@@ -572,13 +711,76 @@ class CentrifugalCompressor:
         speed_rate = 0.08 if self.speed_target > self.speed else 0.12
         self.speed = self._approach(self.speed, self.speed_target, speed_rate)
         
-        # Calculate operating severity
+        # 1. Apply environmental conditions if enabled
+        if self.use_environmental:
+            try:
+                env_cond = self.env_model.get_conditions(self.elapsed_hours)
+                self.suction_temp = env_cond.get('ambient_temp_C', self.suction_temp)
+                self.suction_pressure = env_cond.get('pressure_kPa', self.suction_pressure)
+            except:
+                pass
+        
+        # 2. Calculate operating severity
         severity = self._calculate_operating_severity()
         
-        # Advance health model
+        # 3. Apply thermal transients if enabled
+        thermal_multiplier = 1.0
+        if self.use_thermal_model:
+            try:
+                thermal_state = self.thermal_model.step(
+                    target_speed=self.speed_target,
+                    rated_speed=self.LIMITS['speed_max'],
+                    timestep_minutes=1/60
+                )
+                thermal_multiplier = thermal_state.get('degradation_multiplier', 1.0)
+                severity *= thermal_multiplier
+            except:
+                pass
+        
+        # 4. Check for incipient faults if enabled
+        if self.use_faults:
+            try:
+                fault_event = self.fault_sim.check_fault_initiation(
+                    operating_hours_increment=1/3600,
+                    stress_factor=severity,
+                    timestamp=self.current_timestamp,
+                    operating_hours=self.operating_hours,
+                    component_list=['impeller', 'bearing', 'seal_primary', 'seal_secondary']
+                )
+                self.fault_sim.propagate_faults(1/3600, severity)
+            except:
+                pass
+        
+        # 5. Check for process upsets if enabled
+        if self.use_upsets:
+            try:
+                upset_event = self.upset_sim.check_upset_initiation(
+                    timestep_seconds=1,
+                    timestamp=self.current_timestamp,
+                    operating_state={'speed': self.speed, 'flow': self.flow}
+                )
+            except:
+                pass
+        
+        # 6. Advance health model
         health_state = self.health_model.step(severity)
         
-        # Update process conditions
+        # 7. Adjust health for active faults if enabled
+        if self.use_faults:
+            try:
+                health_state = self.fault_sim.adjust_health_for_faults(health_state)
+            except:
+                pass
+        
+        # 8. Apply upset damage if enabled
+        if self.use_upsets:
+            try:
+                if self.upset_sim.active_upset:
+                    health_state = self.upset_sim.calculate_upset_damage(health_state)
+            except:
+                pass
+        
+        # 9. Update process conditions
         self._update_process(health_state)
         
         # Check surge
@@ -595,20 +797,62 @@ class CentrifugalCompressor:
         # Check bearing temperature trip
         if max(self.bearing_temp_de, self.bearing_temp_nde, self.thrust_bearing_temp) > self.LIMITS['bearing_temp_max']:
             raise Exception("F_BEARING_TEMP")
-            
-        # Generate shaft orbit
-        x_disp, y_disp = self.orbit_model.generate_orbit(self.speed, health_state)
-        orbit_metrics = self.orbit_model.compute_metrics(x_disp, y_disp)
+        
+        # 10. Generate vibration metrics
+        if self.use_enhanced_vibration:
+            try:
+                vib_signal, vib_metrics = self.vib_generator_enhanced.generate_bearing_vibration(
+                    rpm=self.speed,
+                    bearing_health=health_state.get('bearing', 1.0),
+                    duration=1.0
+                )
+                orbit_amplitude = vib_metrics.get('peak', 0) * 0.5
+                sync_amplitude = vib_metrics.get('rms', 0)
+            except:
+                x_disp, y_disp = self.orbit_model.generate_orbit(self.speed, health_state)
+                orbit_metrics = self.orbit_model.compute_metrics(x_disp, y_disp)
+                orbit_amplitude = orbit_metrics['orbit_amplitude']
+                sync_amplitude = orbit_metrics['sync_amplitude']
+        else:
+            x_disp, y_disp = self.orbit_model.generate_orbit(self.speed, health_state)
+            orbit_metrics = self.orbit_model.compute_metrics(x_disp, y_disp)
+            orbit_amplitude = orbit_metrics['orbit_amplitude']
+            sync_amplitude = orbit_metrics['sync_amplitude']
         
         # Check vibration trip
-        if orbit_metrics['orbit_amplitude'] > self.LIMITS['vibration_trip'] * 2:
+        if orbit_amplitude > self.LIMITS['vibration_trip'] * 2:
             raise Exception("F_HIGH_VIBRATION")
-            
+        
+        # 11. Check maintenance required if enabled
+        if self.use_maintenance:
+            try:
+                maint_type = self.maint_scheduler.check_maintenance_required(
+                    operating_hours=self.operating_hours,
+                    health_state=health_state,
+                    is_planned_shutdown=(self.speed == 0)
+                )
+                
+                if maint_type:
+                    maint_action = self.maint_scheduler.perform_maintenance(
+                        maint_type,
+                        current_health=health_state,
+                        operating_hours=self.operating_hours,
+                        timestamp=self.current_timestamp
+                    )
+                    self.health_model.health = maint_action.health_after
+                    health_state = maint_action.health_after
+            except:
+                pass
+        
         # Update operating hours
         if self.speed > 0:
             self.operating_hours += 1/3600
-            
+        
         self.t += 1
+        if hasattr(self, 'elapsed_hours'):
+            self.elapsed_hours += 1/3600
+        if hasattr(self, 'current_timestamp'):
+            self.current_timestamp += timedelta(seconds=1)
         
         # Build telemetry message
         state = {
@@ -625,10 +869,10 @@ class CentrifugalCompressor:
             'bearing_temp_de': round(self._add_noise(self.bearing_temp_de, 0.3), 2),
             'bearing_temp_nde': round(self._add_noise(self.bearing_temp_nde, 0.3), 2),
             'thrust_bearing_temp': round(self._add_noise(self.thrust_bearing_temp, 0.3), 2),
-            'shaft_x_displacement': round(orbit_metrics['orbit_amplitude'] / 2, 4),
-            'shaft_y_displacement': round(orbit_metrics['orbit_amplitude'] / 2 * 0.95, 4),
-            'orbit_amplitude': round(orbit_metrics['orbit_amplitude'], 4),
-            'sync_amplitude': round(orbit_metrics['sync_amplitude'], 4),
+            'shaft_x_displacement': round(orbit_amplitude / 2, 4),
+            'shaft_y_displacement': round(orbit_amplitude / 2 * 0.95, 4),
+            'orbit_amplitude': round(orbit_amplitude, 4),
+            'sync_amplitude': round(sync_amplitude, 4),
             'primary_seal_leakage': round(seal_state['primary_leakage'], 3),
             'secondary_seal_leakage': round(seal_state['secondary_leakage'], 3),
             'efficiency': round(self.efficiency, 4),
@@ -639,6 +883,32 @@ class CentrifugalCompressor:
             'health_seal_primary': round(seal_state['primary_health'], 4),
             'health_seal_secondary': round(seal_state['secondary_health'], 4),
         }
+        
+        # Add fault information if enabled
+        if self.use_faults:
+            try:
+                fault_summary = self.fault_sim.get_active_fault_summary()
+                state['num_active_faults'] = fault_summary.get('num_active_faults', 0)
+                state['total_faults_initiated'] = fault_summary.get('total_initiated', 0)
+            except:
+                pass
+        
+        # Add upset information if enabled
+        if self.use_upsets:
+            try:
+                state['upset_active'] = self.upset_sim.active_upset is not None
+                if self.upset_sim.active_upset:
+                    state['upset_type'] = self.upset_sim.active_upset.upset_type.value
+                    state['upset_severity'] = self.upset_sim.active_upset.severity
+            except:
+                pass
+        
+        # Format output if formatter is available
+        if self.use_output_formatter:
+            try:
+                state = self.output_formatter.format_record(state, self.current_timestamp)
+            except:
+                pass
         
         return state
 
@@ -697,11 +967,7 @@ def generate_compressor_dataset(
                     state['machineID'] = machine_id
                     state['cycle'] = cycle
                     telemetry.append(state)
-                    timestamp = datetime(
-                        timestamp.year, timestamp.month, timestamp.day,
-                        timestamp.hour, timestamp.minute,
-                        timestamp.second + 1
-                    )
+                    timestamp = timestamp + timedelta(seconds=1)
                     
                 # Shutdown period
                 compressor.set_speed(0)

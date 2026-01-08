@@ -18,7 +18,23 @@ Reference: API 610, Hydraulic Institute Standards, Bently Nevada guidelines
 import numpy as np
 import random
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
+
+# Try to import enhancement modules
+ENHANCEMENTS_AVAILABLE = False
+try:
+    from .physics import (
+        EnhancedVibrationGenerator, BearingGeometry,
+        ThermalTransientModel, ThermalMassProperties,
+        EnvironmentalConditions, LocationType
+    )
+    from .simulation import (
+        MaintenanceScheduler, IncipientFaultSimulator, ProcessUpsetSimulator
+    )
+    from .ml_utils import DataOutputFormatter, OutputMode
+    ENHANCEMENTS_AVAILABLE = True
+except ImportError:
+    pass
 
 
 class CavitationModel:
@@ -350,9 +366,34 @@ class CentrifugalPump:
                  design_head: float = 80.0,
                  design_speed: float = 3000,
                  fluid_density: float = 850.0,
-                 npsh_available: float = 8.0):
+                 npsh_available: float = 8.0,
+                 location_type = None,
+                 enable_enhanced_vibration: bool = True,
+                 enable_thermal_transients: bool = True,
+                 enable_environmental: bool = True,
+                 enable_maintenance: bool = True,
+                 enable_incipient_faults: bool = True,
+                 enable_process_upsets: bool = True,
+                 output_mode = None):
         """
-        Initialize centrifugal pump simulator.
+        Initialize centrifugal pump simulator with optional enhancements.
+        
+        Args:
+            name: Equipment identifier
+            initial_health: Dict with initial component health values
+            design_flow: Pump design flow rate (m³/hr)
+            design_head: Pump design head (m)
+            design_speed: Pump design speed (RPM)
+            fluid_density: Process fluid density (kg/m³)
+            npsh_available: Net positive suction head (m)
+            location_type: LocationType enum for environmental modeling
+            enable_enhanced_vibration: Use envelope-modulated vibration
+            enable_thermal_transients: Model thermal stress
+            enable_environmental: Include environmental variability
+            enable_maintenance: Enable maintenance events
+            enable_incipient_faults: Enable discrete fault initiation
+            enable_process_upsets: Enable process upset events
+            output_mode: Data output format mode
         """
         self.name = name
         self.design_flow = design_flow
@@ -403,7 +444,96 @@ class CentrifugalPump:
         
         # Time tracking
         self.operating_hours = 0.0
+        self.elapsed_hours = 0.0
+        self.current_timestamp = datetime.now()
         self.t = 0
+        
+        # Enhancement feature flags and modules
+        self.use_enhanced_vibration = ENHANCEMENTS_AVAILABLE and enable_enhanced_vibration
+        self.use_thermal_model = ENHANCEMENTS_AVAILABLE and enable_thermal_transients
+        self.use_environmental = ENHANCEMENTS_AVAILABLE and enable_environmental
+        self.use_maintenance = ENHANCEMENTS_AVAILABLE and enable_maintenance
+        self.use_faults = ENHANCEMENTS_AVAILABLE and enable_incipient_faults
+        self.use_upsets = ENHANCEMENTS_AVAILABLE and enable_process_upsets
+        self.use_output_formatter = ENHANCEMENTS_AVAILABLE and output_mode is not None
+        
+        # Initialize enhancement modules
+        self.vibration_generator = None
+        self.thermal_model = None
+        self.environmental_conditions = None
+        self.maintenance_scheduler = None
+        self.fault_simulator = None
+        self.upset_simulator = None
+        self.output_formatter = None
+        
+        if self.use_enhanced_vibration:
+            try:
+                self.vibration_generator = physics.EnhancedVibrationGenerator(
+                    bearing_type='cylindrical_roller',
+                    modulation_type='amplitude'
+                )
+            except Exception as e:
+                self.use_enhanced_vibration = False
+        
+        if self.use_thermal_model:
+            try:
+                self.thermal_model = physics.ThermalTransientModel(
+                    material='steel',
+                    initial_temp=40.0
+                )
+            except Exception as e:
+                self.use_thermal_model = False
+        
+        if self.use_environmental:
+            try:
+                self.environmental_conditions = physics.EnvironmentalConditions(
+                    location_type=location_type,
+                    base_temp=40.0,
+                    base_pressure=101.325
+                )
+            except Exception as e:
+                self.use_environmental = False
+        
+        if self.use_maintenance:
+            try:
+                self.maintenance_scheduler = simulation.MaintenanceScheduler(
+                    equipment_type='centrifugal_pump',
+                    base_mtbf=40000,
+                    base_cbm_threshold=0.85
+                )
+            except Exception as e:
+                self.use_maintenance = False
+        
+        if self.use_faults:
+            try:
+                self.fault_simulator = simulation.IncipientFaultSimulator(
+                    equipment_type='centrifugal_pump',
+                    fault_components=['impeller', 'seal', 'bearing_de', 'bearing_nde'],
+                    degradation_rates={'impeller': 0.00003, 'seal': 0.00002,
+                                     'bearing_de': 0.00015, 'bearing_nde': 0.00015}
+                )
+            except Exception as e:
+                self.use_faults = False
+        
+        if self.use_upsets:
+            try:
+                self.upset_simulator = simulation.ProcessUpsetSimulator(
+                    equipment_type='centrifugal_pump',
+                    base_frequency=0.1,
+                    duration_range=(100, 500)
+                )
+            except Exception as e:
+                self.use_upsets = False
+        
+        if self.use_output_formatter:
+            try:
+                self.output_formatter = ml_utils.DataOutputFormatter(
+                    mode=output_mode,
+                    include_raw=True,
+                    include_derived=True
+                )
+            except Exception as e:
+                self.use_output_formatter = False
         
     def set_speed(self, target_rpm: float):
         """Set target operating speed."""
@@ -494,7 +624,7 @@ class CentrifugalPump:
         
     def next_state(self) -> dict:
         """
-        Advance simulation by one time step.
+        Advance simulation by one time step with optional physics enhancements.
         
         Returns:
             dict: Current telemetry values
@@ -502,20 +632,82 @@ class CentrifugalPump:
         Raises:
             Exception: With failure code on critical failure
         """
+        # 1. Apply environmental conditions if enabled
+        if self.use_environmental:
+            try:
+                env_state = self.environmental_conditions.get_state()
+                ambient_temp = env_state.get('ambient_temp', 40.0)
+                ambient_pressure = env_state.get('ambient_pressure', 101.325)
+                corrosion_factor = env_state.get('corrosion_factor', 1.0)
+            except Exception as e:
+                ambient_temp = 40.0
+                ambient_pressure = 101.325
+                corrosion_factor = 1.0
+        else:
+            ambient_temp = 40.0
+            ambient_pressure = 101.325
+            corrosion_factor = 1.0
+        
         # Update speed toward target
         speed_rate = 0.15 if self.speed_target > self.speed else 0.20
         self.speed = self._approach(self.speed, self.speed_target, speed_rate)
         
-        # Calculate operating severity
+        # 2. Calculate operating severity (base level)
         severity = self._calculate_operating_severity()
         
-        # Update impeller
+        # 3. Apply thermal transients if enabled
+        thermal_multiplier = 1.0
+        if self.use_thermal_model:
+            try:
+                thermal_state = self.thermal_model.step(
+                    ambient_temp=ambient_temp,
+                    operating_temp=self.fluid_temp,
+                    severity=severity
+                )
+                thermal_multiplier = thermal_state.get('degradation_multiplier', 1.0)
+                severity *= thermal_multiplier
+            except Exception as e:
+                pass
+        
+        # 4. Check for incipient fault initiation if enabled
+        if self.use_faults:
+            try:
+                fault_state = self.fault_simulator.step(
+                    operating_hours=self.elapsed_hours if hasattr(self, 'elapsed_hours') else self.operating_hours,
+                    current_severity=severity
+                )
+                # Check for new faults and apply degradation
+                for component, active in fault_state.get('active_faults', {}).items():
+                    if active:
+                        if component == 'impeller' and self.impeller_health > 0.35:
+                            self.impeller_health -= fault_state.get('propagation_rate', 0.001)
+                        elif component == 'seal':
+                            self.seal_model._health -= fault_state.get('propagation_rate', 0.001)
+                        elif component.startswith('bearing'):
+                            bearing_type = 'drive_end' if component == 'bearing_de' else 'non_drive_end'
+                            if bearing_type in self.bearing_model.health:
+                                self.bearing_model.health[bearing_type] -= fault_state.get('propagation_rate', 0.001)
+            except Exception as e:
+                pass
+        
+        # 5. Check for process upsets if enabled
+        upset_damage = 1.0
+        if self.use_upsets:
+            try:
+                upset_state = self.upset_simulator.step()
+                if upset_state.get('active', False):
+                    upset_damage = upset_state.get('damage_multiplier', 1.0)
+                    severity *= upset_damage
+            except Exception as e:
+                pass
+        
+        # 6. Update impeller (with adjusted severity)
         impeller_health = self._update_impeller(severity)
         
-        # Update hydraulics
+        # 7. Update hydraulics
         self._update_hydraulics()
         
-        # Update motor
+        # 8. Update motor
         self._update_motor()
         
         # Check motor current
@@ -537,10 +729,27 @@ class CentrifugalPump:
         if max_bearing_temp > self.LIMITS['bearing_temp_max']:
             raise Exception("F_BEARING_OVERTEMP")
             
-        # Generate vibration signal and compute metrics
-        vib_signal = self.bearing_model.generate_vibration(self.speed)
-        vib_rms = np.sqrt(np.mean(vib_signal**2))
-        vib_peak = np.max(np.abs(vib_signal))
+        # 9. Generate vibration signal
+        if self.use_enhanced_vibration:
+            try:
+                vib_metrics = self.vibration_generator.generate(
+                    speed=self.speed,
+                    load=self.flow / self.design_flow if self.design_flow > 0 else 0,
+                    degradation=1.0 - impeller_health
+                )
+                vib_rms = vib_metrics.get('rms', 0.0)
+                vib_peak = vib_metrics.get('peak', 0.0)
+                vib_enhanced = vib_metrics
+            except Exception as e:
+                vib_signal = self.bearing_model.generate_vibration(self.speed)
+                vib_rms = np.sqrt(np.mean(vib_signal**2))
+                vib_peak = np.max(np.abs(vib_signal))
+                vib_enhanced = None
+        else:
+            vib_signal = self.bearing_model.generate_vibration(self.speed)
+            vib_rms = np.sqrt(np.mean(vib_signal**2))
+            vib_peak = np.max(np.abs(vib_signal))
+            vib_enhanced = None
         
         # Check vibration trip
         if vib_rms > self.LIMITS['vibration_trip']:
@@ -555,10 +764,43 @@ class CentrifugalPump:
         if self.cavitation_model.is_trip_condition(npsh_margin) and self.speed > 0:
             raise Exception("F_CAVITATION")
             
-        # Update operating hours
+        # 10. Update operating hours
         if self.speed > 0:
             self.operating_hours += 1/3600
             
+        # 11. Apply maintenance scheduling if enabled
+        if self.use_maintenance:
+            try:
+                maint_state = self.maintenance_scheduler.step(
+                    operating_hours=self.elapsed_hours if hasattr(self, 'elapsed_hours') else self.operating_hours,
+                    component_health={
+                        'impeller': impeller_health,
+                        'seal': seal_state.get('seal_health', 0.93),
+                        'bearing_de': bearing_state['drive_end_health'],
+                        'bearing_nde': bearing_state['non_drive_end_health']
+                    }
+                )
+                # Apply maintenance if performed
+                if maint_state.get('performed', False):
+                    for component in maint_state.get('maintained_components', []):
+                        if component == 'impeller':
+                            self.impeller_health = min(1.0, self.impeller_health + 0.05)
+                        elif component == 'seal' and hasattr(self.seal_model, '_health'):
+                            self.seal_model._health = min(1.0, self.seal_model._health + 0.05)
+                        elif component.startswith('bearing'):
+                            bearing_type = 'drive_end' if component == 'bearing_de' else 'non_drive_end'
+                            if bearing_type in self.bearing_model.health:
+                                self.bearing_model.health[bearing_type] = min(
+                                    1.0, self.bearing_model.health[bearing_type] + 0.05
+                                )
+            except Exception as e:
+                pass
+        
+        # Update time tracking
+        if hasattr(self, 'elapsed_hours'):
+            self.elapsed_hours += 1/3600
+        if hasattr(self, 'current_timestamp'):
+            self.current_timestamp += timedelta(seconds=1)
         self.t += 1
         
         # Build telemetry message
@@ -590,6 +832,14 @@ class CentrifugalPump:
             'health_bearing_de': round(bearing_state['drive_end_health'], 4),
             'health_bearing_nde': round(bearing_state['non_drive_end_health'], 4),
         }
+        
+        # 12. Apply output formatting if enabled
+        if self.use_output_formatter and vib_enhanced:
+            try:
+                formatted_state = self.output_formatter.format(state, vib_enhanced)
+                state.update(formatted_state)
+            except Exception as e:
+                pass
         
         return state
 
@@ -678,11 +928,7 @@ def generate_pump_dataset(
                     state['service'] = service['name']
                     state['cycle'] = cycle
                     telemetry.append(state)
-                    timestamp = datetime(
-                        timestamp.year, timestamp.month, timestamp.day,
-                        timestamp.hour, timestamp.minute,
-                        timestamp.second + 1
-                    )
+                    timestamp = timestamp + timedelta(seconds=1)
                     
                 pump.set_speed(0)
                 for _ in range(30):

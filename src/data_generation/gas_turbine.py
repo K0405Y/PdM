@@ -16,7 +16,23 @@ Reference: API 670, Bently Nevada monitoring standards, industry operational dat
 import numpy as np
 import random
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Optional, Dict
+
+# Import enhancements (with safe fallback if not available)
+try:
+    from .physics.vibration_enhanced import EnhancedVibrationGenerator, BearingGeometry
+    from .physics.thermal_transient import ThermalTransientModel, ThermalMassProperties
+    from .physics.environmental_conditions import EnvironmentalConditions, LocationType
+    from .simulation.maintenance_events import MaintenanceScheduler
+    from .simulation.incipient_faults import IncipientFaultSimulator
+    from .simulation.process_upsets import ProcessUpsetSimulator
+    from .ml_utils.ml_output_modes import DataOutputFormatter, OutputMode
+    ENHANCEMENTS_AVAILABLE = True
+except ImportError:
+    ENHANCEMENTS_AVAILABLE = False
+    LocationType = None
+    OutputMode = None
 
 class GasTurbineHealthModel:
     """
@@ -269,47 +285,160 @@ class GasTurbine:
         'fuel_flow_max': 3.8,    # kg/s
     }
     
-    def __init__(self, 
+    def __init__(self,
                  name: str,
-                 initial_health: dict = None,
+                 initial_health: Optional[dict] = None,
                  ambient_temp: float = 25.0,
-                 ambient_pressure: float = 101.3):
+                 ambient_pressure: float = 101.3,
+                 # Enhancement flags (optional - backward compatible)
+                 location_type = None,  # LocationType enum if enhancements available
+                 enable_enhanced_vibration: bool = True,
+                 enable_thermal_transients: bool = True,
+                 enable_environmental: bool = True,
+                 enable_maintenance: bool = True,
+                 enable_incipient_faults: bool = True,
+                 enable_process_upsets: bool = True,
+                 output_mode = None):  # OutputMode enum if enhancements available
         """
-        Initialize gas turbine simulator.
-        
+        Initialize gas turbine simulator with optional enhancements.
+
         Args:
             name: Unique identifier for this turbine
             initial_health: Dict with initial health values per component
             ambient_temp: Ambient temperature in °C
             ambient_pressure: Ambient pressure in kPa
+            location_type: Installation location (requires enhancements)
+            enable_enhanced_vibration: Use envelope-modulated vibration
+            enable_thermal_transients: Model startup/shutdown thermal stress
+            enable_environmental: Include environmental variability
+            enable_maintenance: Enable maintenance events
+            enable_incipient_faults: Enable discrete fault initiation
+            enable_process_upsets: Enable process upset events
+            output_mode: Data output format (requires enhancements)
         """
         self.name = name
         self.ambient_temp = ambient_temp
         self.ambient_pressure = ambient_pressure
-        
+
         # Initialize health model
         self.health_model = GasTurbineHealthModel(initial_health)
-        
-        # Initialize vibration generator
+
+        # Initialize base vibration generator
         self.vib_generator = VibrationSignalGenerator()
-        
+
         # Operating state
         self.speed = 0.0           # Current RPM
         self.speed_target = 0.0   # Target RPM
         self.egt = ambient_temp   # Exhaust gas temperature
         self.oil_temp = ambient_temp
         self.fuel_flow = 0.0
-        
+
         # Thermodynamic state
         self.compressor_discharge_temp = ambient_temp
         self.compressor_discharge_pressure = ambient_pressure
-        
+
         # Time tracking
         self.operating_hours = 0.0
         self.t = 0
-        
+        self.elapsed_hours = 0.0
+        self.current_timestamp = datetime.now()
+
         # Performance degradation factor (1.0 = new, <1.0 = degraded)
         self.efficiency = 1.0
+
+        # Initialize enhancements if available and enabled
+        self.enhancements_enabled = ENHANCEMENTS_AVAILABLE
+
+        if ENHANCEMENTS_AVAILABLE:
+            # Enhanced vibration generator
+            if enable_enhanced_vibration:
+                try:
+                    bearing_geom = BearingGeometry(n_balls=12, ball_diameter=15.0,
+                                                  pitch_diameter=75.0, contact_angle=0.0)
+                    self.vib_generator_enhanced = EnhancedVibrationGenerator(
+                        sample_rate=10240, resonance_freq=2500, bearing_geometry=bearing_geom)
+                    self.use_enhanced_vibration = True
+                except:
+                    self.use_enhanced_vibration = False
+            else:
+                self.use_enhanced_vibration = False
+
+            # Thermal transient model
+            if enable_thermal_transients:
+                try:
+                    self.thermal_model = ThermalTransientModel(
+                        ambient_temp=ambient_temp,
+                        thermal_properties=ThermalMassProperties(
+                            tau_bearing=8.0, tau_casing=25.0, tau_rotor=45.0))
+                    self.use_thermal_model = True
+                except:
+                    self.use_thermal_model = False
+            else:
+                self.use_thermal_model = False
+
+            # Environmental conditions
+            if enable_environmental and location_type is not None:
+                try:
+                    self.env_model = EnvironmentalConditions(
+                        location_type=location_type, start_day_of_year=1)
+                    self.use_environmental = True
+                except:
+                    self.use_environmental = False
+            else:
+                self.use_environmental = False
+
+            # Maintenance scheduler
+            if enable_maintenance:
+                try:
+                    self.maint_scheduler = MaintenanceScheduler(
+                        enable_time_based=True, enable_condition_based=True,
+                        enable_opportunistic=True)
+                    self.use_maintenance = True
+                except:
+                    self.use_maintenance = False
+            else:
+                self.use_maintenance = False
+
+            # Incipient fault simulator
+            if enable_incipient_faults:
+                try:
+                    self.fault_sim = IncipientFaultSimulator(
+                        enable_incipient_faults=True, fault_rate_per_1000hrs=0.3)
+                    self.use_faults = True
+                except:
+                    self.use_faults = False
+            else:
+                self.use_faults = False
+
+            # Process upset simulator
+            if enable_process_upsets:
+                try:
+                    self.upset_sim = ProcessUpsetSimulator(
+                        enable_upsets=True, upset_rate_per_month=1.5)
+                    self.use_upsets = True
+                except:
+                    self.use_upsets = False
+            else:
+                self.use_upsets = False
+
+            # Output formatter
+            if output_mode is not None:
+                try:
+                    self.output_formatter = DataOutputFormatter(output_mode=output_mode)
+                    self.use_output_formatter = True
+                except:
+                    self.use_output_formatter = False
+            else:
+                self.use_output_formatter = False
+        else:
+            # Enhancements not available - use base functionality
+            self.use_enhanced_vibration = False
+            self.use_thermal_model = False
+            self.use_environmental = False
+            self.use_maintenance = False
+            self.use_faults = False
+            self.use_upsets = False
+            self.use_output_formatter = False
         
     def set_speed(self, target_rpm: float):
         """Set target operating speed."""
@@ -402,6 +531,8 @@ class GasTurbine:
         """
         Advance simulation by one time step and return current state.
         
+        Conditionally applies enhancements based on initialization flags.
+        
         Returns:
             dict: Current telemetry values
             
@@ -412,31 +543,145 @@ class GasTurbine:
         speed_rate = 0.1 if self.speed_target > self.speed else 0.15
         self.speed = self._approach(self.speed, self.speed_target, speed_rate)
         
-        # Calculate operating severity
+        # 1. Apply environmental conditions if enabled
+        if self.use_environmental:
+            try:
+                env_cond = self.env_model.get_conditions(self.elapsed_hours)
+                self.ambient_temp = env_cond.get('ambient_temp_C', self.ambient_temp)
+                self.ambient_pressure = env_cond.get('pressure_kPa', self.ambient_pressure)
+            except:
+                pass
+        
+        # 2. Calculate operating severity
         severity = self._calculate_operating_severity()
         
-        # Advance health model (may raise exception on failure)
+        # 3. Apply thermal transients if enabled
+        thermal_multiplier = 1.0
+        if self.use_thermal_model:
+            try:
+                thermal_state = self.thermal_model.step(
+                    target_speed=self.speed_target,
+                    rated_speed=self.LIMITS['speed_rated'],
+                    timestep_minutes=1/60
+                )
+                thermal_multiplier = thermal_state.get('degradation_multiplier', 1.0)
+                severity *= thermal_multiplier
+            except:
+                pass
+        
+        # 4. Check for incipient faults if enabled
+        if self.use_faults:
+            try:
+                fault_event = self.fault_sim.check_fault_initiation(
+                    operating_hours_increment=1/3600,
+                    stress_factor=severity,
+                    timestamp=self.current_timestamp,
+                    operating_hours=self.operating_hours,
+                    component_list=['hgp', 'blade', 'bearing', 'fuel']
+                )
+                # Propagate existing faults
+                self.fault_sim.propagate_faults(1/3600, severity)
+            except:
+                pass
+        
+        # 5. Check for process upsets if enabled
+        if self.use_upsets:
+            try:
+                upset_event = self.upset_sim.check_upset_initiation(
+                    timestep_seconds=1,
+                    timestamp=self.current_timestamp,
+                    operating_state={'speed': self.speed, 'egt': self.egt}
+                )
+            except:
+                pass
+        
+        # 6. Advance health model (may raise exception on failure)
         health_state = self.health_model.step(severity)
         
-        # Update thermodynamic state
+        # 7. Adjust health for active faults if enabled
+        if self.use_faults:
+            try:
+                health_state = self.fault_sim.adjust_health_for_faults(health_state)
+            except:
+                pass
+        
+        # 8. Apply upset damage if enabled
+        if self.use_upsets:
+            try:
+                if self.upset_sim.active_upset:
+                    health_state = self.upset_sim.calculate_upset_damage(health_state)
+            except:
+                pass
+        
+        # 9. Update thermodynamic state
         self._update_thermodynamics(health_state)
         
-        # Generate vibration signal and compute metrics
-        vib_signal = self.vib_generator.generate(
-            self.speed, health_state, duration=1.0
-        )
-        vib_rms = self.vib_generator.compute_rms(vib_signal)
-        vib_peak = self.vib_generator.compute_peak(vib_signal)
+        # 10. Generate vibration signal and compute metrics
+        if self.use_enhanced_vibration:
+            try:
+                vib_signal, vib_metrics = self.vib_generator_enhanced.generate_bearing_vibration(
+                    rpm=self.speed,
+                    bearing_health=health_state.get('bearing', 1.0),
+                    duration=1.0
+                )
+                vib_rms = vib_metrics.get('rms', 0)
+                vib_peak = vib_metrics.get('peak', 0)
+                vib_crest = vib_metrics.get('crest_factor', 0)
+                vib_kurtosis = vib_metrics.get('kurtosis', 0)
+            except:
+                # Fallback to base vibration generator
+                vib_signal = self.vib_generator.generate(
+                    self.speed, health_state, duration=1.0
+                )
+                vib_rms = self.vib_generator.compute_rms(vib_signal)
+                vib_peak = self.vib_generator.compute_peak(vib_signal)
+                vib_crest = 0
+                vib_kurtosis = 0
+        else:
+            vib_signal = self.vib_generator.generate(
+                self.speed, health_state, duration=1.0
+            )
+            vib_rms = self.vib_generator.compute_rms(vib_signal)
+            vib_peak = self.vib_generator.compute_peak(vib_signal)
+            vib_crest = 0
+            vib_kurtosis = 0
         
         # Check for vibration trip
         if vib_rms > self.LIMITS['vib_trip']:
             raise Exception("F_VIB_TRIP")
-            
+        
+        # 11. Check maintenance required if enabled
+        if self.use_maintenance:
+            try:
+                maint_type = self.maint_scheduler.check_maintenance_required(
+                    operating_hours=self.operating_hours,
+                    health_state=health_state,
+                    is_planned_shutdown=(self.speed == 0)
+                )
+                
+                if maint_type:
+                    maint_action = self.maint_scheduler.perform_maintenance(
+                        maint_type,
+                        current_health=health_state,
+                        operating_hours=self.operating_hours,
+                        timestamp=self.current_timestamp
+                    )
+                    # Restore health after maintenance
+                    self.health_model.health = maint_action.health_after
+                    health_state = maint_action.health_after
+            except:
+                pass
+        
         # Update operating hours
         if self.speed > 0:
             self.operating_hours += 1/3600  # Assuming 1-second intervals
             
         self.t += 1
+        if hasattr(self, 'elapsed_hours'):
+            self.elapsed_hours += 1/3600
+        if hasattr(self, 'current_timestamp'):
+            from datetime import timedelta
+            self.current_timestamp += timedelta(seconds=1)
         
         # Build telemetry message
         state = {
@@ -462,6 +707,37 @@ class GasTurbine:
             'health_bearing': round(health_state['bearing'], 4),
             'health_fuel': round(health_state['fuel'], 4),
         }
+        
+        # Add enhanced vibration metrics if available
+        if self.use_enhanced_vibration and vib_crest > 0:
+            state['vibration_crest_factor'] = round(vib_crest, 3)
+            state['vibration_kurtosis'] = round(vib_kurtosis, 3)
+        
+        # Add fault information if enabled
+        if self.use_faults:
+            try:
+                fault_summary = self.fault_sim.get_active_fault_summary()
+                state['num_active_faults'] = fault_summary.get('num_active_faults', 0)
+                state['total_faults_initiated'] = fault_summary.get('total_initiated', 0)
+            except:
+                pass
+        
+        # Add upset information if enabled
+        if self.use_upsets:
+            try:
+                state['upset_active'] = self.upset_sim.active_upset is not None
+                if self.upset_sim.active_upset:
+                    state['upset_type'] = self.upset_sim.active_upset.upset_type.value
+                    state['upset_severity'] = self.upset_sim.active_upset.severity
+            except:
+                pass
+        
+        # Format output if formatter is available
+        if self.use_output_formatter:
+            try:
+                state = self.output_formatter.format_record(state, self.current_timestamp)
+            except:
+                pass
         
         return state
 
@@ -518,11 +794,7 @@ def generate_turbine_dataset(
                     state['machineID'] = machine_id
                     state['cycle'] = cycle
                     telemetry.append(state)
-                    timestamp = datetime(
-                        timestamp.year, timestamp.month, timestamp.day,
-                        timestamp.hour, timestamp.minute, 
-                        timestamp.second + 1
-                    )
+                    timestamp = timestamp + timedelta(seconds=1)
                     
                 # Cooldown period
                 turbine.set_speed(0)

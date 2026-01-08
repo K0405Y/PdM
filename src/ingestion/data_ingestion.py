@@ -3,6 +3,15 @@ import sys
 from typing import Dict, List
 import logging
 from sqlalchemy import text
+
+# Import numpy at module level for efficiency
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
+    np = None
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -89,22 +98,19 @@ class DataIngestion:
     
     def _convert_numpy_types(self, value):
         """Convert numpy types to native Python types and round floats to 2 decimal places."""
-        try:
-            import numpy as np
+        if HAS_NUMPY and np is not None:
             if isinstance(value, np.integer):
                 return int(value)
             elif isinstance(value, np.floating):
                 return round(float(value), 2)
             elif isinstance(value, np.ndarray):
                 return value.tolist()
-        except (ImportError, AttributeError):
-            pass
-        
+
         # Round regular Python floats to 2 decimal places
         if isinstance(value, float):
             return round(value, 2)
-        return value
-    
+        return value    
+        
     def _extract_values(self, record: Dict, column_mapping: Dict, defaults: Dict) -> List:
         """Extract values from record according to column mapping."""
         values = []
