@@ -86,13 +86,21 @@ signal = A * envelope * carrier
 #### Environmental Variability
 **Addition**: Location-specific profiles with cyclic variations
 
-| Location | Daily Swing | Seasonal Swing | Salt Exposure | Dust Exposure |
-|----------|-------------|----------------|---------------|---------------|
-| Offshore | 3°C | 10°C | 0.9 | 0.1 |
-| Desert | 18°C | 15°C | 0.0 | 0.95 |
-| Arctic | 5°C | 25°C | 0.3 | 0.1 |
+| Location | Annual Mean | Daily Swing | Seasonal Swing | Humidity | Salt Exposure | Dust Exposure | Ice Risk |
+|----------|-------------|-------------|----------------|----------|---------------|---------------|----------|
+| Offshore | 15°C | 3°C | 10°C | 75% | 0.9 | 0.1 | 0.2 |
+| Desert | 30°C | 18°C | 15°C | 20% | 0.0 | 0.95 | 0.0 |
+| Arctic | -15°C | 5°C | 25°C | 60% | 0.3 | 0.1 | 0.95 |
+| Tropical | 28°C | 7°C | 3°C | 85% | 0.4 | 0.3 | 0.0 |
+| Temperate | 12°C | 8°C | 18°C | 65% | 0.1 | 0.3 | 0.3 |
 
-**Impact**: Temperature derating, corrosion/fouling factors, performance variability
+**Impact**:
+- Temperature derating (~0.7% per °C above 15°C ISO conditions)
+- Corrosion factors (salt + humidity dependent)
+- Fouling factors (dust exposure dependent)
+- Ice formation risk (temperature + humidity + location)
+- Density ratio affects compressor mass flow
+- Performance variability across daily and seasonal cycles
 
 ### Performance Optimizations
 
@@ -191,30 +199,6 @@ formatter = DataOutputFormatter(OutputMode.SENSOR_ONLY)
 **Impact**: Edge case coverage, rapid damage events, enriched training scenarios
 
 ---
-
-## Performance Benchmarks
-
-### Memory Efficiency
-| Dataset Size | Original | Enhanced | Reduction |
-|--------------|----------|----------|-----------|
-| 1M records | ~8 GB RAM | ~50 MB RAM | 160x |
-| 10M records | ~80 GB RAM | ~50 MB RAM | 1600x |
-
-### Execution Speed
-| Task | Original | Enhanced | Speedup |
-|------|----------|----------|---------|
-| Simulate 100 equipment (serial) | 100 min | 100 min | 1x |
-| Simulate 100 equipment (parallel 8 cores) | 100 min | 13 min | 7.7x |
-| DB insertion (1M rows) | 200 sec | 3 sec | 67x |
-
-### Combined Pipeline
-**6 months × 100 equipment × 10-min sampling**:
-- Original: ~4 hours (single core, serial DB inserts)
-- Enhanced: ~25 minutes (8 cores parallel, bulk inserts)
-**Speedup: 9.6x**
-
----
-
 ## Data Quality Improvements
 
 ### Signal Realism
@@ -248,41 +232,6 @@ formatter = DataOutputFormatter(OutputMode.SENSOR_ONLY)
 
 ---
 
-## Integration Effort
-
-### Minimal Changes Required
-Each enhancement is **modular** and **backward-compatible**:
-
-1. **Drop-in replacements**: `EnhancedVibrationGenerator` replaces `VibrationSignalGenerator`
-2. **Additive features**: Thermal model adds fields, doesn't modify existing
-3. **Optional activation**: All features can be enabled/disabled via flags
-
-### Integration Time Estimates
-- Basic integration (vibration + thermal): **2-4 hours**
-- Full integration (all 10 enhancements): **1-2 days**
-- Testing & validation: **2-3 days**
-**Total: ~1 week** for complete migration
-
----
-
-## Recommendations
-
-### Immediate Priorities
-1. ** Bug fixes** (timestamp handling - already correct!)
-2. **Integrate enhanced vibration** - Highest ML value
-3. **Switch to generator pipeline** - Immediate memory/speed gains
-4. **Add thermal transients** - High physics realism impact
-
-### Short-term (Next Sprint)
-5. **Enable incipient faults** - Better training data
-6. **Add process upsets** - Edge case coverage
-7. **Implement maintenance events** - Realistic degradation patterns
-8. **Parallel simulation** - 8x speedup
-
-### Medium-term
-9. **Environmental variability** - Location-specific profiles
-10. **ML output modes** - Proper train/eval separation
-
 ### Long-term Enhancements
 **Corrosion modeling** - Electrochemical degradation
 **Erosion tracking** - Particle impact modeling
@@ -291,89 +240,8 @@ Each enhancement is **modular** and **backward-compatible**:
 **Multi-equipment dependencies** - Process chains, cascade failures
 
 ---
-
-## Files Modified/Created
-
-### New Files (8 modules + 2 docs)
-```
-src/data_generation/
-├── vibration_enhanced.py          (320 lines)
-├── thermal_transient.py            (280 lines)
-├── maintenance_events.py           (360 lines)
-├── environmental_conditions.py     (310 lines)
-├── pipeline_enhanced.py            (370 lines)
-├── ml_output_modes.py              (420 lines)
-├── incipient_faults.py            (380 lines)
-└── process_upsets.py              (350 lines)
-
-docs/
-├── INTEGRATION_GUIDE.md            (650 lines)
-└── ENHANCEMENT_SUMMARY.md          (this file)
-```
-
-### Files to Update (User Action Required)
-```
-src/data_generation/
-├── gas_turbine.py                  (integrate enhancements)
-├── centrifugal_compressor.py       (integrate enhancements)
-└── centrifugal_pump.py             (integrate enhancements)
-
-src/ingestion/
-├── data_pipeline.py                (switch to generators)
-└── data_ingestion.py               (add bulk insert methods)
-
-database/schemas/
-└── *.sql                           (add new columns for thermal, faults, upsets)
-```
-
----
-
-## Validation Checklist
-
 ### Physics Validation
 - [ ] Compare vibration spectra with real bearing defect data
 - [ ] Validate startup degradation multipliers against literature (2-3x)
 - [ ] Check thermal time constants match equipment specifications
 - [ ] Verify environmental impacts (temperature derating ~0.7% per °C)
-
-### Performance Validation
-- [ ] Measure memory usage (should be < 100MB for large datasets)
-- [ ] Benchmark DB insertion speed (target: >100k rows/sec)
-- [ ] Test parallel speedup (should approach linear with core count)
-
-### ML Model Validation
-- [ ] Train models on original vs enhanced data
-- [ ] Compare F1 scores for failure prediction
-- [ ] Evaluate on sensor-only mode (realistic)
-- [ ] Check for label leakage in test set
-
----
-
-## Support & Documentation
-
-**Integration Guide**: `docs/INTEGRATION_GUIDE.md` - Step-by-step instructions
-**Module Docstrings**: Each module has detailed documentation
-**Example Code**: See `if __name__ == '__main__':` blocks in each module
-**Performance Benchmarks**: This document, section "Performance Benchmarks"
-
----
-
-## Conclusion
-
-These enhancements transform the PdM simulation from a research prototype to a production-grade synthetic data platform:
-
-**Physics Realism**: Industrial-grade signal fidelity with envelope analysis, thermal transients, and location-specific degradation
-
-**Performance**: 10-100x improvements in memory usage and execution speed through generators, parallelization, and bulk operations
-
-**ML Readiness**: Proper train/eval separation, realistic edge cases, and discrete fault events for better precursor detection
-
-**Total Implementation**: ~2,800 lines of new code, fully modular and backward-compatible
-
-The system is now ready for industrial-scale dataset generation and production ML model development.
-
----
-
-**Status**:  **Complete - Ready for Integration**
-
-*Generated: 2026-01-06*
