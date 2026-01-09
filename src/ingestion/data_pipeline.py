@@ -8,9 +8,9 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-from src.data_generation.gas_turbine import GasTurbine
-from src.data_generation.centrifugal_compressor import CentrifugalCompressor
-from src.data_generation.centrifugal_pump import CentrifugalPump
+from src.data_simulation.gas_turbine import GasTurbine
+from src.data_simulation.centrifugal_compressor import CentrifugalCompressor
+from src.data_simulation.centrifugal_pump import CentrifugalPump
 
 # Setup logging
 logging.basicConfig(

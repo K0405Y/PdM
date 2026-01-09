@@ -9,8 +9,7 @@ This package contains modules for realistic physical modeling:
 
 from .vibration_enhanced import (
     EnhancedVibrationGenerator,
-    BearingGeometry,
-    BackwardCompatibleVibrationGenerator
+    BearingGeometry
 )
 from .thermal_transient import (
     ThermalTransientModel,

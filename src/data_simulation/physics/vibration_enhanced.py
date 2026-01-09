@@ -10,7 +10,7 @@ Key Features:
 - Bearing geometry-based defect frequencies
 - Progression from incipient to severe defects
 
-Reference: ISO 10816, Bently Nevada envelope analysis techniques
+Reference: ISO 10816, Randall "Vibration-based Condition Monitoring"
 """
 
 import numpy as np
@@ -47,7 +47,7 @@ class BearingGeometry:
 
         # Ball Spin Frequency
         bsf = (self.pitch_diameter / (2 * self.ball_diameter)) * \
-              (1 - (bd_pd * cos_phi)**2) * f_shaft
+            (1 - (bd_pd * cos_phi)**2) * f_shaft
 
         # Fundamental Train Frequency (cage)
         ftf = 0.5 * (1 - bd_pd * cos_phi) * f_shaft
@@ -285,39 +285,6 @@ class EnhancedVibrationGenerator:
             'bpfo_freq': round(defect_freqs['bpfo'], 2),
             'bpfi_freq': round(defect_freqs['bpfi'], 2)
         }
-
-
-# Backward compatibility: simple wrapper for existing code
-class BackwardCompatibleVibrationGenerator:
-    """Wrapper to maintain compatibility with existing simulator code."""
-
-    def __init__(self, sample_rate: int = 1024):
-        self.enhanced_gen = EnhancedVibrationGenerator(sample_rate=sample_rate)
-
-    def generate(self, rpm: float, health_state: Dict, duration: float = 1.0) -> np.ndarray:
-        """
-        Generate vibration compatible with existing GasTurbine interface.
-
-        Args:
-            rpm: Rotor speed (RPM)
-            health_state: Dict with 'bearing' health value
-            duration: Signal duration (seconds)
-
-        Returns:
-            Vibration signal (mm/s)
-        """
-        bearing_health = health_state.get('bearing', 1.0)
-        signal, _ = self.enhanced_gen.generate_bearing_vibration(rpm, bearing_health, duration)
-        return signal
-
-    def compute_rms(self, signal: np.ndarray) -> float:
-        """Compute RMS velocity."""
-        return np.sqrt(np.mean(signal**2))
-
-    def compute_peak(self, signal: np.ndarray) -> float:
-        """Compute peak velocity."""
-        return np.max(np.abs(signal))
-
 
 if __name__ == '__main__':
     """Demonstration and validation."""
