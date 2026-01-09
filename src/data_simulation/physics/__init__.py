@@ -27,7 +27,6 @@ from .environmental_conditions import (
 __all__ = [
     'EnhancedVibrationGenerator',
     'BearingGeometry',
-    'BackwardCompatibleVibrationGenerator',
     'ThermalTransientModel',
     'ThermalMassProperties',
     'OperatingMode',
