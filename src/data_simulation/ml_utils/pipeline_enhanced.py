@@ -17,7 +17,6 @@ import os
 import sys
 from typing import Generator, Dict, List, Tuple, Iterator
 from multiprocessing import Pool, cpu_count
-from functools import partial
 import logging
 from io import StringIO
 import csv

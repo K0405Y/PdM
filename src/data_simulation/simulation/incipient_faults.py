@@ -27,7 +27,7 @@ class FaultType(Enum):
     CRACK_FATIGUE = "crack_fatigue"              # Fatigue crack initiation
     SEAL_DAMAGE = "seal_damage"                  # Seal face damage
     CONTAMINATION = "contamination"              # Debris contamination
-    CORROSION_PIT = "corrosion_pit"             # Localized corrosion
+    CORROSION_PIT = "corrosion_pit"              # Localized corrosion
     BLADE_FOD = "blade_fod"                      # Foreign object damage (turbine/compressor)
     CAVITATION_EROSION = "cavitation_erosion"    # Pump cavitation damage
 

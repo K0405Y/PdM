@@ -2,13 +2,15 @@
 Maintenance Event Modeling System
 
 Simulates maintenance interventions including routine service, component replacement,
-and major overhauls. Models imperfect maintenance and post-maintenance infant mortality.
+major overhauls, and emergency repairs. Models imperfect maintenance and post-maintenance
+infant mortality.
 
 Key Features:
-- Multiple maintenance types (routine, minor, major)
+- Multiple maintenance types (routine, minor, major, emergency)
 - Probabilistic health restoration
 - Infant mortality after maintenance
 - Maintenance scheduling (time-based, condition-based, opportunistic)
+- Emergency maintenance triggered by critical health thresholds
 
 Reference: CMMS integration patterns, maintenance effectiveness studies
 """
@@ -63,16 +65,17 @@ class MaintenanceScheduler:
         self.enable_condition_based = enable_condition_based
         self.enable_opportunistic = enable_opportunistic
 
-        # Scheduling parameters (hours)
-        self.routine_interval = 2000      # Every 2000 operating hours
-        self.minor_interval = 8000        # Every 8000 operating hours
-        self.major_interval = 24000       # Every 24000 operating hours
+        # Scheduling parameters (number of hours)
+        self.routine_interval = 2000      
+        self.minor_interval = 8000        
+        self.major_interval = 24000       
 
-        # Condition-based thresholds
+        # Condition-based thresholds (health fraction upper limits)
         self.condition_thresholds = {
-            'routine': 0.85,    # Trigger routine at health < 0.85
-            'minor': 0.70,      # Trigger minor overhaul at health < 0.70
-            'major': 0.55       # Trigger major overhaul at health < 0.55
+            'routine': 0.85,    
+            'minor': 0.70,      
+            'major': 0.55,
+            'emergency': 0.20
         }
 
         # Maintenance effectiveness (restoration amount)
@@ -87,6 +90,7 @@ class MaintenanceScheduler:
         self.last_routine = 0.0
         self.last_minor = 0.0
         self.last_major = 0.0
+        self.last_emergency = 0.0
         self.maintenance_history: List[MaintenanceAction] = []
 
     def check_maintenance_required(self,
@@ -108,7 +112,10 @@ class MaintenanceScheduler:
         if self.enable_condition_based:
             min_health = min(health_state.values())
 
-            if min_health < self.condition_thresholds['major']:
+            # Emergency maintenance has highest priority (critical health)
+            if min_health < self.condition_thresholds['emergency']:
+                return MaintenanceType.EMERGENCY
+            elif min_health < self.condition_thresholds['major']:
                 return MaintenanceType.MAJOR_OVERHAUL
             elif min_health < self.condition_thresholds['minor']:
                 return MaintenanceType.MINOR_OVERHAUL
@@ -201,6 +208,9 @@ class MaintenanceScheduler:
             self.last_major = operating_hours
             self.last_minor = operating_hours
             self.last_routine = operating_hours
+        elif maintenance_type == MaintenanceType.EMERGENCY:
+            self.last_emergency = operating_hours
+            # Emergency doesn't reset planned maintenance schedules
 
         # Add to history
         self.maintenance_history.append(action)
@@ -291,6 +301,7 @@ class MaintenanceScheduler:
 
     def get_maintenance_summary(self) -> Dict:
         """Get summary statistics of maintenance history."""
+        
         if not self.maintenance_history:
             return {'total_events': 0, 'total_cost': 0, 'total_downtime': 0}
 
@@ -316,8 +327,8 @@ class MaintenanceScheduler:
 
 if __name__ == '__main__':
     """Demonstration of maintenance scheduling."""
+
     print("Maintenance Event Modeling - Demonstration")
-    print("=" * 60)
 
     scheduler = MaintenanceScheduler()
 
@@ -326,7 +337,7 @@ if __name__ == '__main__':
     operating_hours = 0
     timestamp = datetime.now()
 
-    print("\n--- SIMULATION ---")
+    print("\nSIMULATION")
     print(f"Initial health: {health}")
 
     for i in range(100):  # 100 time steps (e.g., weeks)
@@ -350,13 +361,13 @@ if __name__ == '__main__':
 
             print(f"\n[{operating_hours:.0f} hrs] {maintenance_needed.value.upper()}")
             print(f"  Components: {action.components_affected}")
-            print(f"  Health improvement: {action.health_before} → {action.health_after}")
+            print(f"  Health improvement: {action.health_before} -> {action.health_after}")
             print(f"  Cost: ${action.cost:,.0f} | Downtime: {action.duration_hours:.1f} hrs")
             print(f"  Quality factor: {action.quality_factor:.2f}")
 
         timestamp += timedelta(days=7)
 
-    print("\n--- MAINTENANCE SUMMARY ---")
+    print("\nMAINTENANCE SUMMARY")
     summary = scheduler.get_maintenance_summary()
     print(f"Total events: {summary['total_events']}")
     print(f"Total cost: ${summary['total_cost']:,.0f}")

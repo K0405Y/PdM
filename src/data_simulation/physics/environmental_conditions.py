@@ -378,7 +378,7 @@ if __name__ == '__main__':
                   f"Fouling: {conditions['fouling_factor']:.2f}x")
 
     # Demonstrate weather event
-    print("\n--- WEATHER EVENT SIMULATION ---")
+    print("\nWEATHER EVENT SIMULATION")
     env = EnvironmentalConditions(LocationType.OFFSHORE)
     normal = env.get_conditions(1000)
     storm = env.simulate_weather_event('storm')

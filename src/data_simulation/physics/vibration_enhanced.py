@@ -291,7 +291,6 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
 
     print("Enhanced Vibration Generator - Demonstration")
-    print("=" * 60)
 
     # Create generator with custom bearing geometry
     bearing = BearingGeometry(n_balls=9, ball_diameter=12.0, pitch_diameter=60.0)

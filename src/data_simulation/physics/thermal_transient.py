@@ -300,12 +300,11 @@ class ThermalTransientModel:
 if __name__ == '__main__':
     """Demonstration of thermal transient behavior."""
     print("Thermal Transient Model - Demonstration")
-    print("=" * 60)
 
     model = ThermalTransientModel(ambient_temp=25.0)
 
     # Simulate startup sequence
-    print("\n--- STARTUP SEQUENCE ---")
+    print("\nSTARTUP SEQUENCE")
     rated_speed = 10000
 
     # Initial idle

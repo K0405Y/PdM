@@ -17,7 +17,7 @@ Reference: Process safety management, abnormal situation management
 import numpy as np
 import random
 from enum import Enum
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 class UpsetType(Enum):
     """Types of process upsets."""
     LIQUID_CARRYOVER = "liquid_carryover"      # Liquid enters gas compressor
-    PUMP_RUNOUT = "pump_runout"                # Pump operating beyond BEP
+    PUMP_RUNOUT = "pump_runout"                # Pump operating beyond best efficiency point
     CAVITATION_EVENT = "cavitation_event"      # Pump cavitation
     THERMAL_SHOCK = "thermal_shock"            # Rapid temperature change
     FEED_COMPOSITION_SHIFT = "feed_composition_shift"  # Gas/fluid property change
@@ -49,7 +49,6 @@ class ProcessUpsetSimulator:
     """
     Generates and manages process upset events.
     """
-
     def __init__(self,
                  enable_upsets: bool = True,
                  upset_rate_per_month: float = 2.0):
@@ -348,7 +347,6 @@ class ProcessUpsetSimulator:
 if __name__ == '__main__':
     """Demonstration of process upset simulation."""
     print("Process Upset Events - Demonstration")
-    print("=" * 60)
 
     simulator = ProcessUpsetSimulator(
         enable_upsets=True,
@@ -370,7 +368,7 @@ if __name__ == '__main__':
 
     health = {'bearing': 0.90, 'seal': 0.85, 'impeller': 0.92}
 
-    print("\n--- SIMULATION ---")
+    print("\nSIMULATION")
 
     for hour in range(hours_to_simulate):
         timestamp += timedelta(hours=1)
@@ -405,7 +403,7 @@ if __name__ == '__main__':
             else:
                 current_state = normal_state
 
-    print(f"\n--- SUMMARY ---")
+    print(f"\nSUMMARY")
     print(f"Total upsets simulated: {len(simulator.upset_history)}")
     print(f"Final health: {health}")
 
