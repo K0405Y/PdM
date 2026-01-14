@@ -285,6 +285,8 @@ if self.use_environmental:
 
 **Benefit**: Realistic environmental effects on corrosion and performance
 
+**Location Profiles**: Eight profiles including African climates (Sahel for dust, Highland Tropical for altitude effects, Savanna for seasonal variation). Supports both synthetic and real weather. See [environmental_conditions.md](environmental_conditions.md) and [weather_api_client.md](weather_api_client.md).
+
 ### Simulation Module Integration
 
 #### Maintenance Scheduler
@@ -790,6 +792,8 @@ pump = CentrifugalPump(
 
 - [gas_turbine.md](gas_turbine.md) - Gas turbine simulation
 - [centrifugal_compressor.md](centrifugal_compressor.md) - Compressor with surge modeling
+- [environmental_conditions.md](environmental_conditions.md) - Synthetic environmental modeling
+- [weather_api_client.md](weather_api_client.md) - Real weather API integration
 - [vibration_enhanced.md](vibration_enhanced.md) - Advanced bearing vibration
 - [process_upsets.md](process_upsets.md) - Cavitation events and pump runout
 - [incipient_faults.md](incipient_faults.md) - Bearing spall and seal damage progression

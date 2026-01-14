@@ -169,7 +169,8 @@ if self.use_thermal_model:
 **When Enabled** (`enable_environmental=True`, requires `location_type`):
 - Modifies ambient temperature and pressure
 - Seasonal and diurnal variations
-- Location-specific profiles (Offshore, Desert, Arctic, Tropical, Temperate)
+- Location-specific profiles (Offshore, Desert, Arctic, Tropical, Temperate, Sahel, Highland Tropical, Savanna)
+- **NEW**: Supports real weather via Weather API integration
 
 **Integration Point** (line 547-553):
 ```python
@@ -180,6 +181,26 @@ if self.use_environmental:
 ```
 
 **Benefit**: Realistic environmental variability affects turbine performance and degradation
+
+**Weather API Option**: Use `weather_api_client.create_hybrid_environment()` to provide real weather data from specific sites instead of synthetic location profiles. See [weather_api_client.md](weather_api_client.md) for details.
+
+```python
+# Option 1: Synthetic location profile
+env_model = EnvironmentalConditions(LocationType.SAHEL)
+
+# Option 2: Real weather for specific site
+from weather_api_client import create_hybrid_environment
+env_model = create_hybrid_environment(
+    use_real_weather=True,
+    location_name="Lagos",
+    country="Nigeria",
+    api_key="your_key"
+)
+
+# Both work with GasTurbine simulator
+gt = GasTurbine(equipment_id=1, enable_environmental=True)
+gt.env_model = env_model  # Custom environmental source
+```
 
 ### 2. Simulation Module Integration
 
@@ -650,6 +671,8 @@ initial_health = {'hgp': 0.60, 'blade': 0.70, 'bearing': 0.55, 'fuel': 0.68}
 
 - [centrifugal_compressor.md](centrifugal_compressor.md) - Compressor simulation with surge protection
 - [centrifugal_pump.md](centrifugal_pump.md) - Pump simulation with cavitation modeling
+- [environmental_conditions.md](environmental_conditions.md) - Synthetic environmental modeling with African location types
+- [weather_api_client.md](weather_api_client.md) - Real weather API integration and caching
 - [vibration_enhanced.md](vibration_enhanced.md) - Advanced vibration generation
 - [thermal_transient.md](thermal_transient.md) - Startup/shutdown thermal stress
 - [maintenance_events.md](maintenance_events.md) - Maintenance scheduling and restoration

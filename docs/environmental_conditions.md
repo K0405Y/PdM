@@ -17,7 +17,8 @@ This module provides physics-based environmental modeling to generate realistic 
 
 ## Key Features
 
-- **Five Location Profiles**: Offshore, Desert, Arctic, Tropical, and Temperate
+- **Eight Location Profiles**: Offshore, Desert, Arctic, Tropical, Temperate, Sahel, Highland Tropical, and Savanna
+- **Weather API Integration**: Hybrid approach supporting both synthetic and real weather data
 - **Cyclic Temperature Modeling**: Daily and seasonal temperature variations
 - **Humidity Dynamics**: Temperature-correlated humidity with physical limits
 - **Atmospheric Pressure**: Weather-pattern pressure variations
@@ -28,7 +29,7 @@ This module provides physics-based environmental modeling to generate realistic 
 
 ### LocationType Enum
 
-Defines five distinct installation location types:
+Defines eight distinct installation location types:
 
 ```python
 class LocationType(Enum):
@@ -37,6 +38,9 @@ class LocationType(Enum):
     ARCTIC = "arctic"
     TROPICAL = "tropical"
     TEMPERATE = "temperate"
+    SAHEL = "sahel"                          # West African transition zone
+    HIGHLAND_TROPICAL = "highland_tropical"  # Ethiopian/Kenyan highlands
+    SAVANNA = "savanna"                      # Semi-arid savanna
 ```
 
 ### SeasonalPattern Dataclass
@@ -186,6 +190,75 @@ Moderate climate with balanced seasonal variations.
 **Seasonal Characteristics**: Traditional 4-season pattern. Winter: -6°C, Spring: 12°C, Summer: 30°C, Fall: 12°C. Symmetric pattern with spring and fall as transition periods at the annual mean temperature.
 
 **Degradation**: Balanced degradation mechanisms. Seasonal freeze-thaw cycles in winter. Moderate corrosion and fouling rates. Equipment experiences full range of operating conditions throughout the year.
+
+#### Sahel
+
+West African transition zone (Mali, Niger, Chad, Sudan) with hot temperatures, low humidity, and extreme seasonal dust exposure during Harmattan winds.
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| Annual Mean Temp | 30°C | Hot |
+| Daily Amplitude | 14°C | Large day-night swings |
+| Seasonal Pattern | 2-season | Wet (Mar-May), Dry/Harmattan (Sep-Nov) |
+| Season Peaks | Days 80, 260 | Wet season, Dry season |
+| Season Amplitudes | +5°C, -5°C | Moderate seasonal variation |
+| Humidity | 35% | Low to moderate |
+| Humidity Variation | 25% | Large wet/dry season variation |
+| Salt Exposure | 0.0 | None |
+| Dust Exposure | 0.80 | Very high (Harmattan dust storms) |
+| Ice Risk | 0.0 | None |
+
+**Seasonal Characteristics**: Distinct 2-season pattern. Wet season (Mar-May): ~35°C with 50-60% humidity and rain. Dry season with Harmattan (Nov-Mar): ~25°C with 10-20% humidity and intense dust storms from the Sahara. Temperature relatively stable year-round compared to humidity and dust variations.
+
+**Degradation**: Dust fouling is severe, especially during Harmattan when fine Saharan dust can travel hundreds of kilometers. Compressor fouling, filter clogging, and abrasive wear are primary concerns. High temperatures year-round accelerate lubricant degradation. Low humidity during dry season limits corrosion but dust abrasion dominates.
+
+**African Countries**: Mali, Niger, Chad, northern Nigeria, Sudan, Burkina Faso, Senegal
+
+#### Highland Tropical
+
+Ethiopian and Kenyan highlands with altitude-cooled tropical climate. Cooler temperatures due to elevation (~600-2000m) while maintaining tropical rainfall patterns.
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| Annual Mean Temp | 18°C | Moderate (10°C cooler than lowland tropical) |
+| Daily Amplitude | 10°C | Moderate |
+| Seasonal Pattern | 2-season | Wet (Mar-May), Dry (Sep) |
+| Season Peaks | Days 60, 240 | Wet season, Dry season |
+| Season Amplitudes | +2°C, -2°C | Minimal temperature change |
+| Humidity | 70% | High |
+| Pressure | 98.0 kPa | Lower due to altitude (~600-2000m) |
+| Salt Exposure | 0.0 | None (inland) |
+| Dust Exposure | 0.2 | Low |
+| Ice Risk | 0.1 | Occasional frost at high altitude |
+
+**Seasonal Characteristics**: Tropical rainfall pattern with altitude-moderated temperatures. Wet season: ~20°C, Dry season: ~16°C. Temperature variation minimal - seasons distinguished by rainfall like lowland tropics, but cooler year-round due to elevation. Occasional frost possible at highest elevations during dry season nights.
+
+**Degradation**: Moderate corrosion due to high humidity combined with moderate temperatures. Lower pressure affects gas turbine and compressor performance (reduced density). Occasional cold starts during dry season. Equipment must handle altitude effects and moderate thermal cycling.
+
+**African Countries**: Ethiopia (highlands), Kenya (highlands), Rwanda, Burundi, parts of Tanzania (Kilimanjaro region), Uganda (mountainous areas)
+
+#### Savanna
+
+Semi-arid savanna climate (Zimbabwe, Tanzania interior, Zambia) with moderate temperatures, distinct wet/dry seasons, and moderate dust during dry season.
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| Annual Mean Temp | 25°C | Warm |
+| Daily Amplitude | 12°C | Moderate |
+| Seasonal Pattern | 2-season (Southern Hemisphere) | Summer (Jan), Winter (Jul) |
+| Season Peaks | Days 15, 195 | Southern Hemisphere seasons |
+| Season Amplitudes | +8°C, -8°C | Moderate seasonal variation |
+| Humidity | 55% | Moderate |
+| Humidity Variation | 20% | Moderate wet/dry variation |
+| Salt Exposure | 0.0 | None (inland) |
+| Dust Exposure | 0.5 | Moderate (dry season) |
+| Ice Risk | 0.0 | None |
+
+**Seasonal Characteristics**: Southern Hemisphere 2-season pattern. Summer (Nov-Mar): ~33°C with wet season rains and 70% humidity. Winter (May-Sep): ~17°C, dry with 35% humidity. Moderate temperature swings and distinct wet/dry periods. Clear seasonal demarcation.
+
+**Degradation**: Balanced degradation profile. Moderate dust fouling during dry season (less severe than Sahel). Warm year-round temperatures accelerate chemical degradation but winter cooling provides some relief. Wet season corrosion followed by dry season dust accumulation. Equipment experiences moderate thermal cycling between seasons.
+
+**African Countries**: Zimbabwe, Zambia, Tanzania (interior), Botswana, Mozambique (interior), South Africa (northern regions)
 
 ## EnvironmentalConditions Class
 
@@ -586,6 +659,121 @@ Temperature calculation calls `_calculate_temperature()` twice in `_calculate_hu
 5. **Precipitation**: Rain/snow effects on performance and cleaning
 6. **Historical Weather Data**: Use real meteorological data for specific sites
 
+## Weather API Integration
+
+The environmental conditions module can be extended with real-world weather data through the `weather_api_client.py` module, which provides a hybrid approach combining synthetic and API-based weather.
+
+### Hybrid Architecture
+
+The weather API integration uses an abstract base class `EnvironmentalDataSource` that allows seamless switching between synthetic and real weather sources:
+
+```python
+from weather_api_client import create_hybrid_environment
+
+# Option 1: Synthetic weather (default)
+env = create_hybrid_environment(
+    use_real_weather=False,
+    fallback_source=EnvironmentalConditions(LocationType.SAHEL)
+)
+
+# Option 2: Real weather with location name
+env = create_hybrid_environment(
+    use_real_weather=True,
+    api_provider="weatherapi",
+    api_key="your_api_key",
+    location_name="Lagos",
+    country="Nigeria",
+    cache_enabled=True
+)
+
+# Option 3: Real weather with coordinates
+env = create_hybrid_environment(
+    use_real_weather=True,
+    api_provider="weatherapi",
+    api_key="your_api_key",
+    latitude=6.5244,
+    longitude=3.3792,
+    cache_enabled=True
+)
+
+# Get conditions (same interface for both synthetic and real)
+conditions = env.get_conditions(elapsed_hours=0, timestamp=datetime.now())
+```
+
+### Supported Weather API Providers
+
+1. **WeatherAPI.com** (Recommended)
+   - Free tier: 1M calls/month
+   - City name and coordinate support
+   - Signup: https://www.weatherapi.com/signup.aspx
+
+2. **OpenWeatherMap**
+   - Free tier: 60 calls/minute, 1M calls/month
+   - City name and coordinate support
+   - Signup: https://openweathermap.org/api
+
+3. **Visual Crossing**
+   - Free tier: 1000 calls/day
+   - Historical weather support
+   - Signup: https://www.visualcrossing.com/weather-api
+
+### Caching Layer
+
+The weather API client includes SQLite-based caching for:
+- **Cost Optimization**: Reduces API calls by caching hourly data
+- **Offline Simulation**: Pre-load cache for reproducible offline runs
+- **Rate Limiting**: Automatic rate limit management (60 calls/minute default)
+
+Cache behavior:
+- Automatic: Caches all API responses with configurable TTL (24 hours default)
+- Manual preload: Use `preload_cache()` for batch caching of historical data
+- Location-based keys: Cache keyed by location query (e.g., "Lagos,Nigeria")
+
+### African Location Examples
+
+```python
+# Nigerian coastal installation (Sahel-adjacent)
+lagos_env = create_hybrid_environment(
+    use_real_weather=True,
+    location_name="Lagos",
+    country="Nigeria",
+    api_key=api_key
+)
+
+# Ethiopian highlands installation
+addis_env = create_hybrid_environment(
+    use_real_weather=True,
+    location_name="Addis Ababa",
+    country="Ethiopia",
+    api_key=api_key
+)
+
+# Zimbabwean savanna installation
+harare_env = create_hybrid_environment(
+    use_real_weather=True,
+    location_name="Harare",
+    country="Zimbabwe",
+    api_key=api_key
+)
+```
+
+### Benefits of Hybrid Approach
+
+1. **Development**: Use fast synthetic data during algorithm development
+2. **Validation**: Test with real weather from specific sites
+3. **Production**: Deploy with either synthetic or real weather depending on connectivity
+4. **Reproducibility**: Cache real weather for deterministic re-runs
+5. **Cost Control**: Hourly caching reduces API costs by 3600x
+
+### Implementation Notes
+
+- Both synthetic and real weather return the same data format
+- Real weather includes wind_speed_m_s field (synthetic sets to 0)
+- Automatic fallback to synthetic on API errors
+- No code changes needed in equipment simulators
+
+See [weather_api_client.md](weather_api_client.md) for detailed API integration documentation.
+
 ## References
 
 1. ISO 2314:2009 - Gas turbines - Acceptance tests
@@ -596,6 +784,7 @@ Temperature calculation calls `_calculate_temperature()` twice in `_calculate_hu
 
 ## See Also
 
-- `thermal_transient.py` - Thermal dynamics during startups/shutdowns
-- `vibration_enhanced.py` - Vibration signal generation with environmental noise
-- `gas_turbine.py` - Main gas turbine simulator (uses environmental conditions)
+- [weather_api_client.md](weather_api_client.md) - Weather API integration and caching
+- [thermal_transient.md](thermal_transient.md) - Thermal dynamics during startups/shutdowns
+- [vibration_enhanced.md](vibration_enhanced.md) - Vibration signal generation with environmental noise
+- [gas_turbine.md](gas_turbine.md) - Main gas turbine simulator (uses environmental conditions)

@@ -207,6 +207,8 @@ if self.use_environmental:
 
 **Benefit**: Realistic inlet conditions affecting compression ratio and performance
 
+**Location Profiles**: Eight profiles available including African climates (Sahel, Highland Tropical, Savanna). Use synthetic `EnvironmentalConditions` or real weather via `weather_api_client`. See [environmental_conditions.md](environmental_conditions.md) and [weather_api_client.md](weather_api_client.md).
+
 ### Simulation Module Integration
 
 #### Maintenance Scheduler
@@ -687,6 +689,8 @@ compressor = CentrifugalCompressor(
 
 - [gas_turbine.md](gas_turbine.md) - Gas turbine simulation
 - [centrifugal_pump.md](centrifugal_pump.md) - Pump simulation with cavitation
+- [environmental_conditions.md](environmental_conditions.md) - Synthetic environmental modeling
+- [weather_api_client.md](weather_api_client.md) - Real weather API integration
 - [vibration_enhanced.md](vibration_enhanced.md) - Advanced vibration modeling
 - [process_upsets.md](process_upsets.md) - Liquid carryover and surge events
 - [incipient_faults.md](incipient_faults.md) - Bearing and seal fault progression
