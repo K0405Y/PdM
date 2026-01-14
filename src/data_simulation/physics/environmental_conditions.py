@@ -26,6 +26,9 @@ class LocationType(Enum):
     ARCTIC = "arctic"
     TROPICAL = "tropical"
     TEMPERATE = "temperate"
+    SAHEL = "sahel"                          
+    HIGHLAND_TROPICAL = "highland_tropical"  
+    SAVANNA = "savanna"                      
 
 
 @dataclass
@@ -155,6 +158,57 @@ LOCATION_PROFILES = {
         salt_exposure=0.1,
         dust_exposure=0.3,
         ice_risk=0.3
+    ),
+
+    LocationType.SAHEL: EnvironmentalProfile(
+        temp_annual_mean=30.0,
+        temp_daily_amplitude=14.0,
+        seasonal_pattern=SeasonalPattern(
+            hemisphere="northern",
+            season_peaks=[80, 260],  # Wet season (Mar-May), Dry season (Sep-Nov, Harmattan)
+            season_amplitudes=[5.0, -5.0]  # Moderate seasonal variation
+        ),
+        humidity_mean=35.0,
+        humidity_variation=25.0,  # Large variation between wet/dry seasons
+        pressure_mean=101.0,
+        pressure_variation=2.0,
+        salt_exposure=0.0,
+        dust_exposure=0.80,  # High dust, especially during Harmattan
+        ice_risk=0.0
+    ),
+
+    LocationType.HIGHLAND_TROPICAL: EnvironmentalProfile(
+        temp_annual_mean=18.0,  # 10°C cooler than lowland tropical
+        temp_daily_amplitude=10.0,
+        seasonal_pattern=SeasonalPattern(
+            hemisphere="northern",
+            season_peaks=[60, 240],  # Wet season (Mar-May), Dry season (Sep)
+            season_amplitudes=[2.0, -2.0]  # Minimal temperature change, moderate altitude
+        ),
+        humidity_mean=70.0,
+        humidity_variation=15.0,
+        pressure_mean=98.0,  # Lower pressure at altitude (~600m-2000m)
+        pressure_variation=2.0,
+        salt_exposure=0.0,
+        dust_exposure=0.2,
+        ice_risk=0.1  # Occasional frost at high altitude
+    ),
+
+    LocationType.SAVANNA: EnvironmentalProfile(
+        temp_annual_mean=25.0,
+        temp_daily_amplitude=12.0,
+        seasonal_pattern=SeasonalPattern(
+            hemisphere="southern",
+            season_peaks=[15, 195],  # Summer (Jan), Winter (Jul)
+            season_amplitudes=[8.0, -8.0]  # Moderate seasonal variation
+        ),
+        humidity_mean=55.0,
+        humidity_variation=20.0,
+        pressure_mean=101.0,
+        pressure_variation=2.5,
+        salt_exposure=0.0,
+        dust_exposure=0.5,  # Moderate dust during dry season
+        ice_risk=0.0
     )
 }
 
@@ -354,7 +408,8 @@ if __name__ == '__main__':
 
     # Test each location type
     locations = [LocationType.OFFSHORE, LocationType.DESERT, LocationType.ARCTIC, 
-                 LocationType.TROPICAL, LocationType.TEMPERATE]
+                 LocationType.TROPICAL, LocationType.TEMPERATE, LocationType.SAHEL, 
+                 LocationType.HIGHLAND_TROPICAL, LocationType.SAVANNA]
 
     for loc_type in locations:
         print(f"\n- {loc_type.value.upper()} -")
