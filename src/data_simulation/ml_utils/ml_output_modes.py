@@ -43,7 +43,7 @@ class DataOutputFormatter:
     # Fields that would never be measured in reality (internal states)
     INTERNAL_STATE_FIELDS = {
         'operating_mode', 'thermal_stress', 'degradation_multiplier',
-        'differential_temp_C'  # Sometimes measured, but treating as internal for demo
+        'differential_temp_C'  
     }
 
     def __init__(self,
@@ -331,7 +331,6 @@ class TrainTestSplitter:
 if __name__ == '__main__':
     """Demonstration of output modes."""
     print("ML Output Modes - Demonstration")
-    print("=" * 60)
 
     # Mock telemetry record
     mock_record = {
@@ -359,7 +358,7 @@ if __name__ == '__main__':
                 print(f"  {key}: {formatted[key]}")
 
     # Demonstrate train/test splitting
-    print("\n--- TRAIN/TEST SPLITTING ---")
+    print("\nTRAIN/TEST SPLITTING")
 
     # Mock dataset
     mock_telemetry = [
