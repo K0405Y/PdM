@@ -83,5 +83,3 @@ CREATE INDEX IF NOT EXISTS idx_cc_telemetry_time ON telemetry.centrifugal_compre
 CREATE INDEX IF NOT EXISTS idx_cp_telemetry_pump_time ON telemetry.centrifugal_pump_telemetry(pump_id, sample_time DESC);
 CREATE INDEX IF NOT EXISTS idx_cp_telemetry_time ON telemetry.centrifugal_pump_telemetry(sample_time DESC);
 
--- Create partitions by month for telemetry tables (optional, for very large datasets)
--- This is left commented as PostgreSQL partitioning requires additional setup

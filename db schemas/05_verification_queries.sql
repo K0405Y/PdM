@@ -1,8 +1,7 @@
 -- Verification and Summary Queries for PdM Data Integrity
 
--- ============================================================================
+
 -- MASTER DATA VERIFICATION
--- ============================================================================
 
 -- Summary of equipment count by type
 SELECT 
@@ -66,9 +65,7 @@ FROM master_data.centrifugal_pumps
 GROUP BY service_type
 ORDER BY pump_count DESC;
 
--- ============================================================================
 -- TELEMETRY DATA VERIFICATION
--- ============================================================================
 
 -- Telemetry record counts by equipment type
 SELECT 
@@ -148,9 +145,7 @@ WHERE interval_minutes IS NOT NULL
 GROUP BY pump_id
 LIMIT 10;
 
--- ============================================================================
 -- HEALTH DEGRADATION VERIFICATION
--- ============================================================================
 
 -- Gas turbine health degradation over time (sample from first and last 100 records)
 WITH ranked_telemetry AS (
@@ -213,9 +208,7 @@ WHERE rn <= 50
 GROUP BY pump_id
 LIMIT 10;
 
--- ============================================================================
 -- FAILURE EVENT VERIFICATION
--- ============================================================================
 
 -- Summary of failures by equipment type
 SELECT 
@@ -277,9 +270,7 @@ LEFT JOIN failure_events.gas_turbine_failures gtf ON gt.turbine_id = gtf.turbine
 GROUP BY gt.turbine_id, gt.name
 ORDER BY failure_count DESC, gt.name;
 
--- ============================================================================
 -- DATA QUALITY CHECKS
--- ============================================================================
 
 -- Check for null values in critical telemetry fields
 SELECT 
@@ -327,9 +318,7 @@ FROM telemetry.centrifugal_pump_telemetry
 WHERE pump_id NOT IN (SELECT pump_id FROM master_data.centrifugal_pumps)
 ORDER BY equipment_type;
 
--- ============================================================================
 -- DATASET STATISTICS SUMMARY
--- ============================================================================
 
 -- Comprehensive data statistics
 WITH totals AS (
