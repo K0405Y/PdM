@@ -285,7 +285,63 @@ if self.use_environmental:
 
 **Benefit**: Realistic environmental effects on corrosion and performance
 
-**Location Profiles**: Eight profiles including African climates (Sahel for dust, Highland Tropical for altitude effects, Savanna for seasonal variation). Supports both synthetic and real weather. See [environmental_conditions.md](environmental_conditions.md) and [weather_api_client.md](weather_api_client.md).
+#### Location Type Selection
+
+Eight pre-configured location profiles model diverse environmental conditions affecting pump performance:
+
+| Location Type | Region | Key Characteristics | Use Cases |
+|--------------|--------|---------------------|-----------|
+| **OFFSHORE** | Marine platforms | High salt (0.9), corrosive environment (15°C), 75% humidity | North Sea (UK/Norway), Gulf of Mexico (US), West Africa offshore |
+| **DESERT** | Arid regions | Extreme heat (30°C), high dust (0.95), low humidity (20%) | Saudi Arabia, UAE, Kuwait, Libya, Algeria |
+| **ARCTIC** | Polar regions | Extreme cold (-15°C), ice risk (0.95), viscosity challenges | Russia (Yamal), Alaska, Northern Canada |
+| **TROPICAL** | Equatorial zones | High humidity (85%), warm (28°C), corrosion acceleration | Indonesia, Malaysia, Nigeria (coastal), Gabon, Venezuela |
+| **TEMPERATE** | Mid-latitudes | 4-season pattern (12°C mean), moderate humidity (65%) | USA, UK, Germany, Netherlands, China |
+| **SAHEL** | West Africa | High dust (0.80), Harmattan season, semi-arid (30°C) | Nigeria (north), Chad, Niger, Sudan |
+| **SAVANNA** | Semi-arid Africa | Southern Hemisphere pattern, moderate dust (0.5), seasonal (25°C) | South Africa, Angola, Mozambique |
+
+**Environmental Impact on Pump Performance**:
+- **Temperature**: Affects fluid viscosity, vapor pressure (NPSHr), and seal performance
+- **Humidity**: Influences corrosion rates on casing and shaft
+- **Pressure**: Alters NPSHa calculations and cavitation risk
+- **Salt/Dust**: Accelerates seal wear, impeller erosion, and bearing contamination
+
+#### Integration Methods
+
+**Method 1: Synthetic Location Profile**
+```python
+from physics.environmental_conditions import LocationType
+
+pump = CentrifugalPump(
+    name='CP-001',
+    location_type=LocationType.SAVANNA,  # South African installation
+    enable_environmental=True
+)
+```
+
+**Method 2: Real Weather API Integration**
+```python
+from physics.weather_api_client import create_hybrid_environment
+
+# Create real weather data source
+env_source = create_hybrid_environment(
+    use_real_weather=True,
+    api_provider="weatherapi",
+    api_key="your_api_key_here",
+    location_name="Port Harcourt",
+    country="Nigeria",
+    cache_enabled=True
+)
+
+pump = CentrifugalPump(
+    name='CP-001',
+    env_model=env_source,  # Use real weather data directly
+    enable_environmental=True
+)
+```
+
+For detailed environmental modeling and weather API integration, see:
+- [environmental_conditions.md](environmental_conditions.md) - Synthetic location profiles
+- [weather_api_client.md](weather_api_client.md) - Real-time weather integration
 
 ### Simulation Module Integration
 
@@ -546,6 +602,81 @@ for i in range(3600):
         fault_info = state.get('active_fault_details', {})
         for comp, fault in fault_info.items():
             print(f"Fault in {comp}: type={fault['type']}, size={fault['size']:.2f}")
+```
+
+### Pump with Real Weather API (Nigerian Coastal Installation)
+
+```python
+from centrifugal_pump import CentrifugalPump
+from physics.weather_api_client import create_hybrid_environment
+from physics.environmental_conditions import EnvironmentalConditions, LocationType
+from ml_utils.ml_output_modes import OutputMode
+
+# Create fallback for when API unavailable
+fallback = EnvironmentalConditions(LocationType.TROPICAL)
+
+# Configure real weather integration for Port Harcourt crude oil pumping station
+env_source = create_hybrid_environment(
+    use_real_weather=True,
+    api_provider="weatherapi",
+    api_key="your_api_key_here",
+    location_name="Port Harcourt",
+    country="Nigeria",
+    fallback_source=fallback,
+    cache_enabled=True,
+    cache_ttl_hours=24
+)
+
+pump = CentrifugalPump(
+    name='CP-PH-001',
+    initial_health={
+        'impeller': 0.92,
+        'seal': 0.88,
+        'bearing_de': 0.85,
+        'bearing_nde': 0.87
+    },
+    design_flow=250,
+    design_head=120,
+    design_speed=3000,
+    fluid_density=850,  # Crude oil
+    npsh_available=9.0,
+
+    # Use real weather data from Port Harcourt, Nigeria
+    env_model=env_source,
+    enable_environmental=True,
+    enable_enhanced_vibration=True,
+    enable_thermal_transients=True,
+    enable_maintenance=True,
+    enable_incipient_faults=True,
+    enable_process_upsets=True,
+    output_mode=OutputMode.FULL
+)
+
+pump.set_speed(3000)
+
+# Simulate 30 days of crude oil pumping with tropical climate effects
+for hour in range(720):
+    state = pump.next_state()
+
+    # Monitor environmental impact
+    if hour % 24 == 0:  # Daily summary
+        day = hour // 24
+        print(f"Day {day}: Temp={state.get('ambient_temp_C', 'N/A'):.1f}°C, "
+              f"Pressure={state.get('pressure_kPa', 'N/A'):.1f} kPa, "
+              f"Humidity={state.get('humidity_percent', 'N/A'):.0f}%")
+
+    # Cavitation monitoring
+    if state['cavitation_severity'] > 0:
+        print(f"Hour {hour}: CAVITATION - Severity={state['cavitation_severity']}, "
+              f"NPSH margin={state['npsh_margin']:.2f} m")
+
+    # Seal health tracking (critical in high humidity)
+    if state['seal_leakage'] > 10:
+        print(f"Hour {hour}: HIGH SEAL LEAKAGE - {state['seal_leakage']:.1f} L/hr")
+
+    # Enhanced fault monitoring
+    if state.get('num_active_faults', 0) > 0:
+        print(f"Hour {hour}: Active faults detected - {state['num_active_faults']}")
 ```
 
 ### Multiple Pump Services

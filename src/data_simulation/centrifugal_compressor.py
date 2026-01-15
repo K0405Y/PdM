@@ -436,6 +436,7 @@ class CentrifugalCompressor:
                  suction_pressure: float = 2000.0,
                  suction_temp: float = 35.0,
                  location_type = None,
+                 env_model = None,
                  enable_enhanced_vibration: bool = True,
                  enable_thermal_transients: bool = True,
                  enable_environmental: bool = True,
@@ -445,7 +446,7 @@ class CentrifugalCompressor:
                  output_mode = None):
         """
         Initialize centrifugal compressor simulator.
-        
+
         Args:
             name: Unique identifier
             initial_health: Dict with initial health values
@@ -453,7 +454,9 @@ class CentrifugalCompressor:
             design_head: Design polytropic head (kJ/kg)
             suction_pressure: Suction pressure (kPa)
             suction_temp: Suction temperature (°C)
-            location_type: LocationType enum for environmental modeling
+            location_type: LocationType enum for synthetic environmental modeling
+            env_model: Custom environmental data source (real weather API or synthetic)
+                      If provided, takes precedence over location_type
             enable_enhanced_vibration: Use envelope-modulated vibration
             enable_thermal_transients: Model thermal stress
             enable_environmental: Include environmental variability
@@ -536,11 +539,21 @@ class CentrifugalCompressor:
             # Environmental model
             if enable_environmental:
                 try:
-                    self.env_model = EnvironmentalConditions(
-                        location_type=location_type or LocationType.TEMPERATE
-                    )
-                    self.use_environmental = True
-                except:
+                    # Priority: env_model > location_type
+                    if env_model is not None:
+                        # Use custom environmental source (real weather API or custom synthetic)
+                        self.env_model = env_model
+                        self.use_environmental = True
+                    elif location_type is not None:
+                        # Use synthetic location profile
+                        self.env_model = EnvironmentalConditions(location_type=location_type)
+                        self.use_environmental = True
+                    else:
+                        # Default to temperate if enhancements available but no location specified
+                        self.env_model = EnvironmentalConditions(location_type=LocationType.TEMPERATE)
+                        self.use_environmental = True
+                except Exception as e:
+                    print(f"Warning: Environmental initialization failed: {e}")
                     self.use_environmental = False
             else:
                 self.use_environmental = False

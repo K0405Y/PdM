@@ -26,8 +26,7 @@ class LocationType(Enum):
     ARCTIC = "arctic"
     TROPICAL = "tropical"
     TEMPERATE = "temperate"
-    SAHEL = "sahel"                          
-    HIGHLAND_TROPICAL = "highland_tropical"  
+    SAHEL = "sahel"
     SAVANNA = "savanna"                      
 
 
@@ -175,23 +174,6 @@ LOCATION_PROFILES = {
         salt_exposure=0.0,
         dust_exposure=0.80,  # High dust, especially during Harmattan
         ice_risk=0.0
-    ),
-
-    LocationType.HIGHLAND_TROPICAL: EnvironmentalProfile(
-        temp_annual_mean=18.0,  # 10°C cooler than lowland tropical
-        temp_daily_amplitude=10.0,
-        seasonal_pattern=SeasonalPattern(
-            hemisphere="northern",
-            season_peaks=[60, 240],  # Wet season (Mar-May), Dry season (Sep)
-            season_amplitudes=[2.0, -2.0]  # Minimal temperature change, moderate altitude
-        ),
-        humidity_mean=70.0,
-        humidity_variation=15.0,
-        pressure_mean=98.0,  # Lower pressure at altitude (~600m-2000m)
-        pressure_variation=2.0,
-        salt_exposure=0.0,
-        dust_exposure=0.2,
-        ice_risk=0.1  # Occasional frost at high altitude
     ),
 
     LocationType.SAVANNA: EnvironmentalProfile(
@@ -407,9 +389,9 @@ if __name__ == '__main__':
     print("Environmental Conditions Simulation")
 
     # Test each location type
-    locations = [LocationType.OFFSHORE, LocationType.DESERT, LocationType.ARCTIC, 
-                 LocationType.TROPICAL, LocationType.TEMPERATE, LocationType.SAHEL, 
-                 LocationType.HIGHLAND_TROPICAL, LocationType.SAVANNA]
+    locations = [LocationType.OFFSHORE, LocationType.DESERT, LocationType.ARCTIC,
+                 LocationType.TROPICAL, LocationType.TEMPERATE, LocationType.SAHEL,
+                 LocationType.SAVANNA]
 
     for loc_type in locations:
         print(f"\n- {loc_type.value.upper()} -")

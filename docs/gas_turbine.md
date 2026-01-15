@@ -6,7 +6,7 @@ The `gas_turbine.py` module simulates an industrial gas turbine typical of offsh
 
 ## Purpose
 
-Gas turbines are critical power generation assets in oil & gas operations, with typical costs of $10-50M and downtime costs of $100K-1M per day. This simulator enables:
+Gas turbines are critical power generation assets in oil & gas operations. This simulator enables:
 
 - **ML Training Data Generation**: Run-to-failure datasets with realistic degradation signatures
 - **Algorithm Development**: Test predictive maintenance algorithms before production deployment
@@ -166,13 +166,25 @@ if self.use_thermal_model:
 
 #### Environmental Conditions (physics.environmental_conditions)
 
-**When Enabled** (`enable_environmental=True`, requires `location_type`):
+**When Enabled** (`enable_environmental=True`):
 - Modifies ambient temperature and pressure
 - Seasonal and diurnal variations
-- Location-specific profiles (Offshore, Desert, Arctic, Tropical, Temperate, Sahel, Highland Tropical, Savanna)
-- **NEW**: Supports real weather via Weather API integration
+- Eight location-specific profiles available
+- Supports both synthetic and real weather data
 
-**Integration Point** (line 547-553):
+**Location Profile Selection:**
+
+| Location Type | Region | Key Characteristics | Use Cases |
+|--------------|--------|---------------------|-----------|
+| OFFSHORE | Marine platforms | High salt (0.9), moderate temp (15°C) | North Sea (UK/Norway), Gulf of Mexico (US), West Africa offshore |
+| DESERT | Arid regions | Extreme dust (0.95), high temp swings (30°C ±15°C) | Saudi Arabia, UAE, Kuwait, Libya, Algeria |
+| ARCTIC | Polar regions | Extreme cold (-15°C), high ice risk (0.95) | Russia (Yamal), Alaska, Northern Canada |
+| TROPICAL | Equatorial | High humidity (85%), minimal seasons (28°C) | Indonesia, Malaysia, Nigeria (coastal), Gabon |
+| TEMPERATE | Mid-latitudes | 4-season pattern (12°C), balanced | USA, UK, Germany, China |
+| SAHEL | West Africa | High dust (0.80), Harmattan season (30°C) | Nigeria (north), Chad, Niger, Sudan |
+| SAVANNA | Semi-arid Africa | Moderate dust (0.5), Southern Hemisphere (25°C) | South Africa, Angola, Mozambique |
+
+**Integration Point** (line 379-398):
 ```python
 if self.use_environmental:
     env_cond = self.env_model.get_conditions(self.elapsed_hours)
@@ -182,25 +194,44 @@ if self.use_environmental:
 
 **Benefit**: Realistic environmental variability affects turbine performance and degradation
 
-**Weather API Option**: Use `weather_api_client.create_hybrid_environment()` to provide real weather data from specific sites instead of synthetic location profiles. See [weather_api_client.md](weather_api_client.md) for details.
+**Two Integration Methods:**
 
+**Method 1: Synthetic Location Profile** (pass `location_type`):
 ```python
-# Option 1: Synthetic location profile
-env_model = EnvironmentalConditions(LocationType.SAHEL)
+from gas_turbine import GasTurbine
+from physics.environmental_conditions import LocationType
 
-# Option 2: Real weather for specific site
-from weather_api_client import create_hybrid_environment
-env_model = create_hybrid_environment(
+gt = GasTurbine(
+    name='GT-001',
+    location_type=LocationType.SAHEL,  # Synthetic Sahel climate
+    enable_environmental=True
+)
+```
+
+**Method 2: Real Weather API** (pass `env_model`):
+```python
+from gas_turbine import GasTurbine
+from physics.weather_api_client import create_hybrid_environment
+
+# Create real weather source
+env_source = create_hybrid_environment(
     use_real_weather=True,
+    api_provider="weatherapi",
+    api_key="your_key",
     location_name="Lagos",
     country="Nigeria",
-    api_key="your_key"
+    cache_enabled=True
 )
 
-# Both work with GasTurbine simulator
-gt = GasTurbine(equipment_id=1, enable_environmental=True)
-gt.env_model = env_model  # Custom environmental source
+# Pass directly to constructor - seamless integration!
+gt = GasTurbine(
+    name='GT-001',
+    env_model=env_source,  # Real weather from Lagos, Nigeria
+    enable_environmental=True
+)
 ```
+
+See [weather_api_client.md](weather_api_client.md) and [environmental_conditions.md](environmental_conditions.md) for detailed documentation.
 
 ### 2. Simulation Module Integration
 
@@ -379,7 +410,7 @@ for i in range(3600):  # 1 hour at 1-second intervals
         break
 ```
 
-### Simulation with All Enhancements
+### Simulation with All Enhancements (Synthetic Weather)
 
 ```python
 from gas_turbine import GasTurbine
@@ -392,8 +423,8 @@ turbine = GasTurbine(
     ambient_temp=15.0,
     ambient_pressure=101.3,
 
-    # Enable enhancements
-    location_type=LocationType.OFFSHORE,
+    # Enable enhancements with synthetic location
+    location_type=LocationType.SAHEL,  # West African Harmattan conditions
     enable_enhanced_vibration=True,
     enable_thermal_transients=True,
     enable_environmental=True,
@@ -417,6 +448,60 @@ for i in range(3600):
 
     if 'num_active_faults' in state and state['num_active_faults'] > 0:
         print(f"Active faults: {state['num_active_faults']}")
+```
+
+### Simulation with Real Weather API
+
+```python
+from gas_turbine import GasTurbine
+from physics.weather_api_client import create_hybrid_environment
+from physics.environmental_conditions import EnvironmentalConditions, LocationType
+from ml_utils.ml_output_modes import OutputMode
+from datetime import datetime, timedelta
+
+# Create hybrid environment with real weather and synthetic fallback
+fallback = EnvironmentalConditions(LocationType.TROPICAL)
+env_source = create_hybrid_environment(
+    use_real_weather=True,
+    api_provider="weatherapi",
+    api_key="your_api_key_here",
+    location_name="Port Harcourt",  # Nigerian coastal installation
+    country="Nigeria",
+    fallback_source=fallback,  # Falls back to synthetic Tropical on API failure
+    cache_enabled=True
+)
+
+turbine = GasTurbine(
+    name='GT-PH-001',
+    initial_health={'hgp': 0.85, 'blade': 0.90, 'bearing': 0.80, 'fuel': 0.88},
+
+    # Pass real weather directly via env_model parameter
+    env_model=env_source,  # Real weather from Port Harcourt, Nigeria
+    enable_enhanced_vibration=True,
+    enable_thermal_transients=True,
+    enable_environmental=True,
+    enable_maintenance=True,
+    enable_incipient_faults=True,
+    enable_process_upsets=True,
+    output_mode=OutputMode.FULL
+)
+
+turbine.set_speed(9500)
+
+# Simulate 30 days with real weather
+start_time = datetime(2025, 1, 1)
+for hour in range(30 * 24):  # 30 days, hourly
+    timestamp = start_time + timedelta(hours=hour)
+
+    # Real weather is automatically fetched and cached
+    state = turbine.next_state()
+
+    # Log real weather conditions
+    if hour % 24 == 0:  # Daily log
+        day = hour // 24
+        print(f"Day {day}: Temp={state.get('ambient_temp', 'N/A')}°C, "
+              f"EGT={state['exhaust_gas_temp']:.1f}°C, "
+              f"Efficiency={state['efficiency']:.3f}")
 ```
 
 ### Run-to-Failure Dataset Generation

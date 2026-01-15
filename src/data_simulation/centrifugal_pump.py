@@ -368,6 +368,7 @@ class CentrifugalPump:
                  fluid_density: float = 850.0,
                  npsh_available: float = 8.0,
                  location_type = None,
+                 env_model = None,
                  enable_enhanced_vibration: bool = True,
                  enable_thermal_transients: bool = True,
                  enable_environmental: bool = True,
@@ -377,7 +378,7 @@ class CentrifugalPump:
                  output_mode = None):
         """
         Initialize centrifugal pump simulator with optional enhancements.
-        
+
         Args:
             name: Equipment identifier
             initial_health: Dict with initial component health values
@@ -386,7 +387,9 @@ class CentrifugalPump:
             design_speed: Pump design speed (RPM)
             fluid_density: Process fluid density (kg/m³)
             npsh_available: Net positive suction head (m)
-            location_type: LocationType enum for environmental modeling
+            location_type: LocationType enum for synthetic environmental modeling
+            env_model: Custom environmental data source (real weather API or synthetic)
+                      If provided, takes precedence over location_type
             enable_enhanced_vibration: Use envelope-modulated vibration
             enable_thermal_transients: Model thermal stress
             enable_environmental: Include environmental variability
@@ -486,12 +489,26 @@ class CentrifugalPump:
         
         if self.use_environmental:
             try:
-                self.environmental_conditions = physics.EnvironmentalConditions(
-                    location_type=location_type,
-                    base_temp=40.0,
-                    base_pressure=101.325
-                )
+                # Priority: env_model > location_type
+                if env_model is not None:
+                    # Use custom environmental source (real weather API or custom synthetic)
+                    self.environmental_conditions = env_model
+                elif location_type is not None:
+                    # Use synthetic location profile
+                    self.environmental_conditions = physics.EnvironmentalConditions(
+                        location_type=location_type,
+                        base_temp=40.0,
+                        base_pressure=101.325
+                    )
+                else:
+                    # Default to temperate if enabled but no location specified
+                    self.environmental_conditions = physics.EnvironmentalConditions(
+                        location_type=LocationType.TEMPERATE,
+                        base_temp=40.0,
+                        base_pressure=101.325
+                    )
             except Exception as e:
+                print(f"Warning: Environmental initialization failed: {e}")
                 self.use_environmental = False
         
         if self.use_maintenance:

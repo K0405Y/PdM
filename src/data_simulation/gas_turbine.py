@@ -290,15 +290,15 @@ class GasTurbine:
                  initial_health: Optional[dict] = None,
                  ambient_temp: float = 25.0,
                  ambient_pressure: float = 101.3,
-                 # Enhancement flags (optional - backward compatible)
-                 location_type = None,  # LocationType enum if enhancements available
+                 location_type = None,  
+                 env_model = None,  
                  enable_enhanced_vibration: bool = True,
                  enable_thermal_transients: bool = True,
                  enable_environmental: bool = True,
                  enable_maintenance: bool = True,
                  enable_incipient_faults: bool = True,
                  enable_process_upsets: bool = True,
-                 output_mode = None):  # OutputMode enum if enhancements available
+                 output_mode = None):  
         """
         Initialize gas turbine simulator with optional enhancements.
 
@@ -307,7 +307,9 @@ class GasTurbine:
             initial_health: Dict with initial health values per component
             ambient_temp: Ambient temperature in °C
             ambient_pressure: Ambient pressure in kPa
-            location_type: Installation location (requires enhancements)
+            location_type: Installation location type (synthetic, requires enhancements)
+            env_model: Custom environmental data source (real weather API or synthetic)
+                      If provided, takes precedence over location_type
             enable_enhanced_vibration: Use envelope-modulated vibration
             enable_thermal_transients: Model startup/shutdown thermal stress
             enable_environmental: Include environmental variability
@@ -377,12 +379,23 @@ class GasTurbine:
                 self.use_thermal_model = False
 
             # Environmental conditions
-            if enable_environmental and location_type is not None:
+            if enable_environmental:
                 try:
-                    self.env_model = EnvironmentalConditions(
-                        location_type=location_type, start_day_of_year=1)
-                    self.use_environmental = True
-                except:
+                    # Priority: env_model > location_type
+                    if env_model is not None:
+                        # Use custom environmental source (real weather API or custom synthetic)
+                        self.env_model = env_model
+                        self.use_environmental = True
+                    elif location_type is not None:
+                        # Use synthetic location profile
+                        self.env_model = EnvironmentalConditions(
+                            location_type=location_type, start_day_of_year=1)
+                        self.use_environmental = True
+                    else:
+                        # Neither provided - environmental disabled
+                        self.use_environmental = False
+                except Exception as e:
+                    print(f"Warning: Environmental initialization failed: {e}")
                     self.use_environmental = False
             else:
                 self.use_environmental = False

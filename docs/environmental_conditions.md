@@ -17,7 +17,7 @@ This module provides physics-based environmental modeling to generate realistic 
 
 ## Key Features
 
-- **Eight Location Profiles**: Offshore, Desert, Arctic, Tropical, Temperate, Sahel, Highland Tropical, and Savanna
+- **Seven Location Profiles**: Offshore, Desert, Arctic, Tropical, Temperate, Sahel, and Savanna
 - **Weather API Integration**: Hybrid approach supporting both synthetic and real weather data
 - **Cyclic Temperature Modeling**: Daily and seasonal temperature variations
 - **Humidity Dynamics**: Temperature-correlated humidity with physical limits
@@ -29,7 +29,7 @@ This module provides physics-based environmental modeling to generate realistic 
 
 ### LocationType Enum
 
-Defines eight distinct installation location types:
+Defines seven distinct installation location types:
 
 ```python
 class LocationType(Enum):
@@ -38,9 +38,8 @@ class LocationType(Enum):
     ARCTIC = "arctic"
     TROPICAL = "tropical"
     TEMPERATE = "temperate"
-    SAHEL = "sahel"                          # West African transition zone
-    HIGHLAND_TROPICAL = "highland_tropical"  # Ethiopian/Kenyan highlands
-    SAVANNA = "savanna"                      # Semi-arid savanna
+    SAHEL = "sahel"
+    SAVANNA = "savanna"
 ```
 
 ### SeasonalPattern Dataclass
@@ -213,29 +212,6 @@ West African transition zone (Mali, Niger, Chad, Sudan) with hot temperatures, l
 **Degradation**: Dust fouling is severe, especially during Harmattan when fine Saharan dust can travel hundreds of kilometers. Compressor fouling, filter clogging, and abrasive wear are primary concerns. High temperatures year-round accelerate lubricant degradation. Low humidity during dry season limits corrosion but dust abrasion dominates.
 
 **African Countries**: Mali, Niger, Chad, northern Nigeria, Sudan, Burkina Faso, Senegal
-
-#### Highland Tropical
-
-Ethiopian and Kenyan highlands with altitude-cooled tropical climate. Cooler temperatures due to elevation (~600-2000m) while maintaining tropical rainfall patterns.
-
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| Annual Mean Temp | 18°C | Moderate (10°C cooler than lowland tropical) |
-| Daily Amplitude | 10°C | Moderate |
-| Seasonal Pattern | 2-season | Wet (Mar-May), Dry (Sep) |
-| Season Peaks | Days 60, 240 | Wet season, Dry season |
-| Season Amplitudes | +2°C, -2°C | Minimal temperature change |
-| Humidity | 70% | High |
-| Pressure | 98.0 kPa | Lower due to altitude (~600-2000m) |
-| Salt Exposure | 0.0 | None (inland) |
-| Dust Exposure | 0.2 | Low |
-| Ice Risk | 0.1 | Occasional frost at high altitude |
-
-**Seasonal Characteristics**: Tropical rainfall pattern with altitude-moderated temperatures. Wet season: ~20°C, Dry season: ~16°C. Temperature variation minimal - seasons distinguished by rainfall like lowland tropics, but cooler year-round due to elevation. Occasional frost possible at highest elevations during dry season nights.
-
-**Degradation**: Moderate corrosion due to high humidity combined with moderate temperatures. Lower pressure affects gas turbine and compressor performance (reduced density). Occasional cold starts during dry season. Equipment must handle altitude effects and moderate thermal cycling.
-
-**African Countries**: Ethiopia (highlands), Kenya (highlands), Rwanda, Burundi, parts of Tanzania (Kilimanjaro region), Uganda (mountainous areas)
 
 #### Savanna
 
@@ -732,7 +708,7 @@ Cache behavior:
 ### African Location Examples
 
 ```python
-# Nigerian coastal installation (Sahel-adjacent)
+# Nigerian coastal installation (tropical)
 lagos_env = create_hybrid_environment(
     use_real_weather=True,
     location_name="Lagos",
@@ -740,19 +716,19 @@ lagos_env = create_hybrid_environment(
     api_key=api_key
 )
 
-# Ethiopian highlands installation
-addis_env = create_hybrid_environment(
+# Algerian desert installation
+algiers_env = create_hybrid_environment(
     use_real_weather=True,
-    location_name="Addis Ababa",
-    country="Ethiopia",
+    location_name="Hassi Messaoud",
+    country="Algeria",
     api_key=api_key
 )
 
-# Zimbabwean savanna installation
-harare_env = create_hybrid_environment(
+# South African savanna installation
+johannesburg_env = create_hybrid_environment(
     use_real_weather=True,
-    location_name="Harare",
-    country="Zimbabwe",
+    location_name="Johannesburg",
+    country="South Africa",
     api_key=api_key
 )
 ```
@@ -768,7 +744,6 @@ harare_env = create_hybrid_environment(
 ### Implementation Notes
 
 - Both synthetic and real weather return the same data format
-- Real weather includes wind_speed_m_s field (synthetic sets to 0)
 - Automatic fallback to synthetic on API errors
 - No code changes needed in equipment simulators
 

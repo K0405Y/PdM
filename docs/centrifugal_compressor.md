@@ -207,7 +207,63 @@ if self.use_environmental:
 
 **Benefit**: Realistic inlet conditions affecting compression ratio and performance
 
-**Location Profiles**: Eight profiles available including African climates (Sahel, Highland Tropical, Savanna). Use synthetic `EnvironmentalConditions` or real weather via `weather_api_client`. See [environmental_conditions.md](environmental_conditions.md) and [weather_api_client.md](weather_api_client.md).
+#### Location Type Selection
+
+Eight pre-configured location profiles model diverse environmental conditions affecting compressor performance:
+
+| Location Type | Region | Key Characteristics | Use Cases |
+|--------------|--------|---------------------|-----------|
+| **OFFSHORE** | Marine platforms | High salt (0.9), moderate temp (15°C), 75% humidity | North Sea (UK/Norway), Gulf of Mexico (US), West Africa offshore |
+| **DESERT** | Arid regions | Extreme heat (30°C), high dust (0.95), low humidity (20%) | Saudi Arabia, UAE, Kuwait, Qatar, Libya, Algeria |
+| **ARCTIC** | Polar regions | Extreme cold (-15°C), ice risk (0.95), pressure variation | Russia (Yamal LNG), Alaska, Northern Canada |
+| **TROPICAL** | Equatorial zones | High humidity (85%), warm (28°C), minimal seasonal variation | Indonesia, Malaysia, Nigeria (coastal), Gabon |
+| **TEMPERATE** | Mid-latitudes | 4-season pattern (12°C mean), moderate humidity (65%) | USA, UK, Germany, Netherlands, China |
+| **SAHEL** | West Africa | High dust (0.80), Harmattan winds, semi-arid (30°C) | Nigeria (north), Chad, Niger, Sudan |
+| **SAVANNA** | Semi-arid Africa | Southern Hemisphere pattern, moderate dust (0.5), seasonal (25°C) | South Africa, Angola, Mozambique |
+
+**Environmental Impact on Compressor Performance**:
+- **Temperature**: Affects gas density, compression ratio, and power requirements
+- **Humidity**: Influences corrosion rates and intercooler effectiveness
+- **Pressure**: Alters volumetric flow calculations and stage matching
+- **Dust/Salt**: Accelerates fouling on impellers and seals
+
+#### Integration Methods
+
+**Method 1: Synthetic Location Profile**
+```python
+from physics.environmental_conditions import LocationType
+
+compressor = CentrifugalCompressor(
+    name='CC-001',
+    location_type=LocationType.SAHEL,  # Pre-configured African profile
+    enable_environmental=True
+)
+```
+
+**Method 2: Real Weather API Integration**
+```python
+from physics.weather_api_client import create_hybrid_environment
+
+# Create real weather data source
+env_source = create_hybrid_environment(
+    use_real_weather=True,
+    api_provider="weatherapi",
+    api_key="your_api_key_here",
+    location_name="Lagos",
+    country="Nigeria",
+    cache_enabled=True
+)
+
+compressor = CentrifugalCompressor(
+    name='CC-001',
+    env_model=env_source,  # Use real weather data directly
+    enable_environmental=True
+)
+```
+
+For detailed environmental modeling and weather API integration, see:
+- [environmental_conditions.md](environmental_conditions.md) - Synthetic location profiles
+- [weather_api_client.md](weather_api_client.md) - Real-time weather integration
 
 ### Simulation Module Integration
 
@@ -441,6 +497,69 @@ for i in range(3600):
 
     if state.get('num_active_faults', 0) > 0:
         print(f"Active faults: {state['num_active_faults']}")
+```
+
+### Compressor with Real Weather API (African Installation)
+
+```python
+from centrifugal_compressor import CentrifugalCompressor
+from physics.weather_api_client import create_hybrid_environment
+from physics.environmental_conditions import EnvironmentalConditions, LocationType
+from ml_utils.ml_output_modes import OutputMode
+
+# Create fallback for when API unavailable
+fallback = EnvironmentalConditions(LocationType.SAHEL)
+
+# Configure real weather integration for Lagos gas compression station
+env_source = create_hybrid_environment(
+    use_real_weather=True,
+    api_provider="weatherapi",
+    api_key="your_api_key_here",
+    location_name="Lagos",
+    country="Nigeria",
+    fallback_source=fallback,
+    cache_enabled=True,
+    cache_ttl_hours=24
+)
+
+compressor = CentrifugalCompressor(
+    name='CC-LG-001',
+    initial_health={'impeller': 0.90, 'bearing': 0.85},
+    design_flow=2500,
+    design_head=9000,
+    suction_pressure=2500,
+    suction_temp=35,
+
+    # Use real weather data from Lagos
+    env_model=env_source,
+    enable_environmental=True,
+    enable_enhanced_vibration=True,
+    enable_thermal_transients=True,
+    enable_maintenance=True,
+    enable_incipient_faults=True,
+    enable_process_upsets=True,
+    output_mode=OutputMode.FULL
+)
+
+compressor.set_speed(12000)
+
+# Simulate 30 days of operation with real weather
+for hour in range(720):
+    state = compressor.next_state()
+
+    # Monitor environmental impact
+    if hour % 24 == 0:  # Daily summary
+        day = hour // 24
+        print(f"Day {day}: Temp={state.get('ambient_temp_C', 'N/A'):.1f}°C, "
+              f"Humidity={state.get('humidity_percent', 'N/A'):.0f}%, "
+              f"Derating={state.get('temp_derating_factor', 1.0):.3f}")
+
+    # Enhanced monitoring
+    if state.get('upset_active'):
+        print(f"Hour {hour}: Upset - {state['upset_type']}")
+
+    if state['surge_alarm']:
+        print(f"Hour {hour}: SURGE ALARM - Margin={state['surge_margin']:.1f}%")
 ```
 
 ### Shaft Orbit Analysis
