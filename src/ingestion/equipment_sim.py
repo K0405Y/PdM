@@ -17,7 +17,10 @@ logger = logging.getLogger(__name__)
 
 
 def simulate_equipment(equipment, equipment_id: int, equipment_type: str,
-                      duration_days: int, sample_interval_min: int) -> Generator[Dict, None, None]:
+                      duration_days: int, sample_interval_min: int,
+                      start_time: datetime = None,
+                      degradation_multiplier: float = 1.0,
+                      include_equipment_type: bool = False) -> Generator[Dict, None, None]:
     """
     Simulate a single piece of equipment.
 
@@ -29,11 +32,16 @@ def simulate_equipment(equipment, equipment_id: int, equipment_type: str,
         equipment_type: 'turbine', 'compressor', or 'pump'
         duration_days: Simulation duration in days
         sample_interval_min: Sample interval in minutes
+        start_time: Optional start time (default: now - duration_days)
+        degradation_multiplier: Multiplier for degradation rate (>1.0 = faster degradation)
+        include_equipment_type: If True, include equipment_type in telemetry records
 
     Yields:
         Dict with 'type' = 'telemetry' or 'failure'
     """
-    start_time = datetime.now() - timedelta(days=duration_days)
+    if start_time is None:
+        start_time = datetime.now() - timedelta(days=duration_days)
+
     num_samples = int(duration_days * 24 * 60 / sample_interval_min)
 
     # Duty cycle: 90% running, 10% idle
@@ -58,14 +66,30 @@ def simulate_equipment(equipment, equipment_id: int, equipment_type: str,
             equipment.t += 1
             equipment.operating_hours += sample_interval_min / 60.0
 
+            # Update timestamps for weather API integration
+            if hasattr(equipment, 'elapsed_hours'):
+                equipment.elapsed_hours += sample_interval_min / 60.0
+            if hasattr(equipment, 'current_timestamp'):
+                equipment.current_timestamp = sample_time
+
+            # Apply additional degradation for increased failure rate
+            if degradation_multiplier > 1.0 and hasattr(equipment, 'health_model'):
+                for _ in range(int(degradation_multiplier) - 1):
+                    if random.random() < (degradation_multiplier % 1.0):
+                        equipment.health_model.step(1.0)
+
             # Yield telemetry record
-            yield {
+            telemetry_record = {
                 'type': 'telemetry',
                 'equipment_id': equipment_id,
                 'sample_time': sample_time,
                 'operating_hours': equipment.operating_hours,
                 'state': state
             }
+            if include_equipment_type:
+                telemetry_record['equipment_type'] = equipment_type
+
+            yield telemetry_record
 
         except Exception as e:
             # Equipment failed - yield failure and stop
