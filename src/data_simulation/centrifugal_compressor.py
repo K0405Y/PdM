@@ -323,7 +323,9 @@ class CentrifugalCompressorHealthModel:
         'F_BEARING': 'Bearing Failure - Journal or thrust bearing damage',
         'F_SEAL_PRIMARY': 'Primary Dry Gas Seal Failure',
         'F_SEAL_SECONDARY': 'Secondary Dry Gas Seal Failure',
-        'F_SURGE': 'Surge Event - Violent flow reversal'
+        'F_SURGE': 'Surge Event - Violent flow reversal',
+        'F_HIGH_VIBRATION': 'High Vibration Trip - Shaft orbit amplitude exceeded safety limits',
+        'F_BEARING_TEMP': 'High Bearing Temperature Trip - Temperature exceeded limit'
     }
     
     def __init__(self, initial_health: dict = None):

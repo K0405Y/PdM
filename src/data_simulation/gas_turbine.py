@@ -833,7 +833,7 @@ def generate_turbine_dataset(
 
 if __name__ == '__main__':
     # Example usage
-    print("Gas Turbine Simulator - Example Run")
+    print("Gas Turbine Simulator")
     
     # Create a turbine with slightly degraded initial state
     gt = GasTurbine(

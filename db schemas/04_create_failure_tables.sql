@@ -68,6 +68,8 @@ INSERT INTO failure_events.failure_modes (equipment_type, mode_code, description
     ('centrifugal_compressor', 'F_SEAL_PRIMARY', 'Primary Dry Gas Seal Failure'),
     ('centrifugal_compressor', 'F_SEAL_SECONDARY', 'Secondary Dry Gas Seal Failure'),
     ('centrifugal_compressor', 'F_SURGE', 'Surge Event - Violent flow reversal'),
+    ('centrifugal_compressor', 'F_HIGH_VIBRATION', 'High Vibration Trip - Shaft orbit amplitude exceeded safety limits'),
+    ('centrifugal_compressor', 'F_BEARING_TEMP', 'High Bearing Temperature Trip - Temperature exceeded limit'),
     ('centrifugal_pump', 'F_IMPELLER', 'Impeller Degradation - Erosion, corrosion, or damage'),
     ('centrifugal_pump', 'F_SEAL', 'Mechanical Seal Failure - Wear, thermal damage, or contamination'),
     ('centrifugal_pump', 'F_BEARING_DRIVE_END', 'Drive End Bearing Failure - Fatigue, lubrication, or contamination'),

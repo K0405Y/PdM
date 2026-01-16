@@ -262,10 +262,10 @@ def insert_failures(db, failures: List[Dict]) -> int:
             # Extract and Clean values
             values = {
                 'val0': _clean(record['equipment_id']),
-                'val1': record['failure_time'], # datetime is fine
+                'val1': record['failure_time'], 
                 'val2': _clean(record['operating_hours_at_failure']),
                 'val3': record['failure_mode_code'],
-                'val4': _clean(state.get('speed', 0)),
+                'val4': _clean(state.get('speed', 0))
             }
 
             # Equipment-specific values with cleaning
