@@ -1,5 +1,5 @@
 """
-Centrifugal Data Pump Simulator 
+Centrifugal Pump Data Simulator 
 
 This module simulates industrial centrifugal pumps typical of offshore platforms,
 refineries, and process facilities. Pumps are the most numerous rotating equipment
@@ -471,59 +471,45 @@ class CentrifugalPump:
         
         if self.use_enhanced_vibration:
             try:
-                self.vibration_generator = physics.EnhancedVibrationGenerator(
+                self.vibration_generator = EnhancedVibrationGenerator(
                     bearing_type='cylindrical_roller',
                     modulation_type='amplitude'
                 )
             except Exception as e:
                 self.use_enhanced_vibration = False
-        
+
         if self.use_thermal_model:
             try:
-                self.thermal_model = physics.ThermalTransientModel(
+                self.thermal_model = ThermalTransientModel(
                     material='steel',
                     initial_temp=40.0
                 )
             except Exception as e:
                 self.use_thermal_model = False
-        
+
         if self.use_environmental:
             try:
-                # Priority: env_model > location_type
-                if env_model is not None:
-                    # Use custom environmental source (real weather API or custom synthetic)
-                    self.environmental_conditions = env_model
-                elif location_type is not None:
-                    # Use synthetic location profile
-                    self.environmental_conditions = physics.EnvironmentalConditions(
-                        location_type=location_type,
-                        base_temp=40.0,
-                        base_pressure=101.325
-                    )
-                else:
-                    # Default to temperate if enabled but no location specified
-                    self.environmental_conditions = physics.EnvironmentalConditions(
-                        location_type=LocationType.TEMPERATE,
-                        base_temp=40.0,
-                        base_pressure=101.325
-                    )
+                self.environmental_conditions = EnvironmentalConditions(
+                    location_type=location_type,
+                    base_temp=40.0,
+                    base_pressure=101.325
+                )
             except Exception as e:
-                print(f"Warning: Environmental initialization failed: {e}")
                 self.use_environmental = False
-        
+
         if self.use_maintenance:
             try:
-                self.maintenance_scheduler = simulation.MaintenanceScheduler(
+                self.maintenance_scheduler = MaintenanceScheduler(
                     equipment_type='centrifugal_pump',
                     base_mtbf=40000,
                     base_cbm_threshold=0.85
                 )
             except Exception as e:
                 self.use_maintenance = False
-        
+
         if self.use_faults:
             try:
-                self.fault_simulator = simulation.IncipientFaultSimulator(
+                self.fault_simulator = IncipientFaultSimulator(
                     equipment_type='centrifugal_pump',
                     fault_components=['impeller', 'seal', 'bearing_de', 'bearing_nde'],
                     degradation_rates={'impeller': 0.00003, 'seal': 0.00002,
@@ -531,20 +517,20 @@ class CentrifugalPump:
                 )
             except Exception as e:
                 self.use_faults = False
-        
+
         if self.use_upsets:
             try:
-                self.upset_simulator = simulation.ProcessUpsetSimulator(
+                self.upset_simulator = ProcessUpsetSimulator(
                     equipment_type='centrifugal_pump',
                     base_frequency=0.1,
                     duration_range=(100, 500)
                 )
             except Exception as e:
                 self.use_upsets = False
-        
+
         if self.use_output_formatter:
             try:
-                self.output_formatter = ml_utils.DataOutputFormatter(
+                self.output_formatter = DataOutputFormatter(
                     mode=output_mode,
                     include_raw=True,
                     include_derived=True
@@ -973,7 +959,6 @@ def generate_pump_dataset(
 
 if __name__ == '__main__':
     print("Centrifugal Pump Simulator - Example Run")
-    print("=" * 50)
     
     pump = CentrifugalPump(
         name="CP-001",

@@ -75,4 +75,5 @@ INSERT INTO failure_events.failure_modes (equipment_type, mode_code, description
     ('centrifugal_pump', 'F_BEARING_OVERTEMP', 'Bearing Overtemperature - Excessive friction or cooling failure'),
     ('centrifugal_pump', 'F_HIGH_VIBRATION', 'High Vibration Trip - Mechanical instability'),
     ('centrifugal_pump', 'F_CAVITATION', 'Severe Cavitation - NPSH margin critical'),
-    ('centrifugal_pump', 'F_MOTOR_OVERLOAD', 'Motor Overload - Excessive current draw');
+    ('centrifugal_pump', 'F_MOTOR_OVERLOAD', 'Motor Overload - Excessive current draw')
+ON CONFLICT (equipment_type, mode_code) DO NOTHING;

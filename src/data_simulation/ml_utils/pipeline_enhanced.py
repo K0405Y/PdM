@@ -394,7 +394,6 @@ class StreamingDataPipeline:
 if __name__ == '__main__':
     """Demonstration of enhanced pipeline."""
     print("Enhanced Simulation Pipeline - Demonstration")
-    print("=" * 60)
 
     # Example: Generator-based simulation
     print("\n--- Generator-Based Simulation ---")

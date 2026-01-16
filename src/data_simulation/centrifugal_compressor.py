@@ -1,5 +1,5 @@
 """
-Centrifugal Data Compressor Simulator 
+Centrifugal Compressor Data Simulator 
 
 This module simulates an industrial centrifugal compressor typical of pipeline
 networks, LNG facilities, and refinery process units. Centrifugal compressors 
@@ -1007,7 +1007,6 @@ def generate_compressor_dataset(
 
 if __name__ == '__main__':
     print("Centrifugal Compressor Simulator - Example Run")
-    print("=" * 50)
     
     cc = CentrifugalCompressor(
         name="CC-001",
