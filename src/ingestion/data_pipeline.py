@@ -396,8 +396,6 @@ def main():
         # Step 6: Verify data
         logger.info("\n--- STEP 6: Verifying Data Integrity ---")
         pipeline.verify_data()
-
-        logger.info("\n" + "="*60)
         logger.info("PIPELINE EXECUTION COMPLETE")
         
     except Exception as e:
