@@ -170,8 +170,8 @@ class MasterData:
                     'date': datetime(2024, 1, 1).date() + timedelta(days=random.randint(0, 364)),
                     'flow': random.uniform(1200, 1800),
                     'head': random.uniform(7500, 8500),
-                    'imp': random.uniform(0.70, 0.98),
-                    'bear': random.uniform(0.70, 0.98)
+                    'imp': random.uniform(0.88, 0.98),
+                    'bear': random.uniform(0.85, 0.98)
                 })
                 ids.append(result.scalar())
 
