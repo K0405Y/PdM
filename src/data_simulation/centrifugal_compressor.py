@@ -359,42 +359,47 @@ class CentrifugalCompressorHealthModel:
         for mode, (d, a, b) in self.degradation_params.items():
             current_h = self.health[mode]
             threshold = self.failure_thresholds[mode]
-            try:
-                ttf = math.pow(math.log(1 - d - current_h) / a, 1 / b)
-            except (ValueError, ZeroDivisionError):
-                ttf = 1000
-            self._generators[mode] = self._health_generator(ttf, d, a, b, threshold)
-            
-    def _health_generator(self, ttf, d, a, b, threshold):
-        """Generator yielding health values over time."""
-        for t in range(int(ttf), -1, -1):
-            h = 1 - d - math.exp(a * t**b)
-            if h < threshold:
-                break
-            yield t, h
+            self._generators[mode] = self._health_generator(current_h, d, a, b, threshold)
+
+    def _health_generator(self, initial_health, d, a, b, threshold):
+        """Generator yielding health values over time using linear degradation."""
+        # Use simpler linear degradation from initial health to threshold
+        # Rate is calibrated so equipment with health=0.92 lasts ~50000 steps
+        base_rate = 0.00001  # Health loss per step
+        current_health = initial_health
+
+        while current_health >= threshold:
+            yield current_health
+            current_health -= base_rate * (1.0 + random.gauss(0, 0.1))  # Small random variation
+            current_health = max(current_health, 0)  # Don't go negative
             
     def step(self, operating_severity: float = 1.0) -> dict:
         """
         Advance health model by one time step.
-        
+
         Returns:
             dict: Current health values
-            
+
         Raises:
             Exception: With failure mode code on failure
         """
         updated_health = {}
-        
+
         for mode, gen in self._generators.items():
             try:
-                if operating_severity > 1.0 and random.random() < (operating_severity - 1.0):
-                    next(gen)
-                t_remaining, h = next(gen)
+                # Apply extra degradation steps for high severity
+                if operating_severity > 1.0:
+                    extra_steps = int(operating_severity - 1.0)
+                    for _ in range(extra_steps):
+                        next(gen)
+                    if random.random() < (operating_severity % 1.0):
+                        next(gen)
+                h = next(gen)
                 self.health[mode] = h
                 updated_health[mode] = h
             except StopIteration:
                 raise Exception(f"F_{mode.upper()}")
-                
+
         return updated_health
 
 
