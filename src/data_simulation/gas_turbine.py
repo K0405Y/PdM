@@ -95,22 +95,32 @@ class GasTurbineHealthModel:
         for mode, (d, a, b) in self.degradation_params.items():
             current_h = self.health[mode]
             threshold = self.failure_thresholds[mode]
-            
-            # Calculate time remaining based on inverse health function
-            # h = 1 - d - exp(a*t^b) => t = (ln(1-d-h)/a)^(1/b)
-            try:
-                ttf = math.pow(math.log(1 - d - current_h) / a, 1 / b)
-            except (ValueError, ZeroDivisionError):
-                ttf = 1000  # Large default if calculation fails
-                
-            self._generators[mode] = self._health_generator(
-                ttf, d, a, b, threshold
-            )
+
+            # Maximum health the exponential formula can represent
+            max_formula_health = 1 - d
+
+            if current_h > max_formula_health:
+                # Health exceeds formula maximum - use hybrid approach
+                # Linear degradation until we reach the formula's range
+                self._generators[mode] = self._hybrid_health_generator(
+                    current_h, max_formula_health, d, a, b, threshold
+                )
+            else:
+                # Normal case - calculate ttf from inverse health function
+                # h = 1 - d - exp(a*t^b) => t = (ln(1-d-h)/a)^(1/b)
+                try:
+                    ttf = math.pow(math.log(1 - d - current_h) / a, 1 / b)
+                except (ValueError, ZeroDivisionError):
+                    ttf = 10000  # Large default if calculation fails
+
+                self._generators[mode] = self._health_generator(
+                    ttf, d, a, b, threshold
+                )
     
     def _health_generator(self, ttf, d, a, b, threshold):
         """
         Generator yielding health values over time until failure.
-        
+
         Yields:
             tuple: (time_remaining, health_value)
         """
@@ -119,7 +129,51 @@ class GasTurbineHealthModel:
             if h < threshold:
                 break
             yield t, h
-            
+
+    def _hybrid_health_generator(self, initial_health, max_formula_health, d, a, b, threshold):
+        """
+        Generator for cases where initial health exceeds formula maximum.
+
+        Uses linear degradation until health reaches the formula's valid range,
+        then switches to the exponential degradation curve.
+
+        Args:
+            initial_health: Starting health value (> max_formula_health)
+            max_formula_health: Maximum health the formula can represent (1 - d)
+            d, a, b: Degradation curve parameters
+            threshold: Failure threshold
+
+        Yields:
+            tuple: (time_remaining, health_value)
+        """
+        # Phase 1: Linear degradation from initial_health to max_formula_health
+        # Use a rate that provides smooth transition (calibrated to ~5000 steps)
+        linear_rate = 0.00002
+        current_health = initial_health
+        t_virtual = 100000  # Virtual time counter for phase 1
+
+        while current_health > max_formula_health:
+            if current_health < threshold:
+                return
+            yield t_virtual, current_health
+            current_health -= linear_rate * (1.0 + random.gauss(0, 0.05))
+            t_virtual -= 1
+
+        # Phase 2: Switch to exponential formula
+        # Find the ttf value that corresponds to max_formula_health (minus small epsilon)
+        transition_health = max_formula_health - 0.001
+        try:
+            ttf = math.pow(math.log(1 - d - transition_health) / a, 1 / b)
+        except (ValueError, ZeroDivisionError):
+            ttf = 10000
+
+        # Continue with exponential degradation
+        for t in range(int(ttf), -1, -1):
+            h = 1 - d - math.exp(a * t**b)
+            if h < threshold:
+                break
+            yield t, h
+
     def step(self, operating_severity: float = 1.0):
         """
         Advance health model by one time step.
