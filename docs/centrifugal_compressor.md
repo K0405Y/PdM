@@ -163,21 +163,40 @@ if surge_margin < 20:
 
 ### Physics Module Integration
 
-#### Enhanced Vibration
+#### Vibration and Orbit Measurement
 
-**Integration Point** (line 802-820):
+**API 617 Compliance**: Centrifugal compressor vibration monitoring uses **displacement** (mm) measured by proximity probes, not velocity (mm/s). This is critical for proper trip threshold evaluation.
+
+**Integration Point** (line 821-845):
+
+The orbit model **always** provides displacement values for API 617 compliance:
+
 ```python
+# Always use orbit model for displacement (mm) - API 617 compliance
+x_disp, y_disp = self.orbit_model.generate_orbit(self.speed, health_state)
+orbit_metrics = self.orbit_model.compute_metrics(x_disp, y_disp)
+orbit_amplitude = orbit_metrics['orbit_amplitude']  # mm (displacement)
+sync_amplitude = orbit_metrics['sync_amplitude']    # mm (displacement)
+
+# Enhanced vibration is optional - provides ML features only (velocity, mm/s)
+vib_rms = None
+vib_peak = None
 if self.use_enhanced_vibration:
-    vib_signal, vib_metrics = self.vib_generator_enhanced.generate_bearing_vibration(
-        rpm=self.speed,
-        bearing_health=health_state.get('bearing', 1.0),
-        duration=1.0
-    )
-    # Uses vibration metrics for orbit amplitude
-    orbit_amplitude = vib_metrics.get('peak', 0) * 0.5
+    try:
+        vib_signal, vib_metrics = self.vib_generator_enhanced.generate_bearing_vibration(
+            rpm=self.speed,
+            bearing_health=health_state.get('bearing', 1.0),
+            duration=1.0
+        )
+        vib_rms = vib_metrics.get('rms', 0)    # mm/s (velocity)
+        vib_peak = vib_metrics.get('peak', 0)  # mm/s (velocity)
+    except:
+        pass
 ```
 
-**Benefit**: Realistic bearing defect progression with BPFO/BPFI/BSF frequencies
+**Important**: Trip thresholds (e.g., 0.075 mm, 0.15 mm) are evaluated against `orbit_amplitude` from the orbit model, not velocity metrics from the enhanced vibration generator.
+
+**Benefit**: Proper unit separation - displacement (mm) for protection, velocity (mm/s) for ML features
 
 #### Thermal Transients
 
