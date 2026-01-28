@@ -819,6 +819,15 @@ class CentrifugalCompressor:
             raise Exception("F_BEARING_TEMP")
         
         # 10. Generate vibration metrics
+        # Always use orbit model for displacement (mm) - used for API 617 trip checks
+        x_disp, y_disp = self.orbit_model.generate_orbit(self.speed, health_state)
+        orbit_metrics = self.orbit_model.compute_metrics(x_disp, y_disp)
+        orbit_amplitude = orbit_metrics['orbit_amplitude']
+        sync_amplitude = orbit_metrics['sync_amplitude']
+
+        # Optionally get enhanced velocity metrics for ML features
+        vib_rms = None
+        vib_peak = None
         if self.use_enhanced_vibration:
             try:
                 vib_signal, vib_metrics = self.vib_generator_enhanced.generate_bearing_vibration(
@@ -826,20 +835,12 @@ class CentrifugalCompressor:
                     bearing_health=health_state.get('bearing', 1.0),
                     duration=1.0
                 )
-                orbit_amplitude = vib_metrics.get('peak', 0) * 0.5
-                sync_amplitude = vib_metrics.get('rms', 0)
+                vib_rms = vib_metrics.get('rms', 0)
+                vib_peak = vib_metrics.get('peak', 0)
             except:
-                x_disp, y_disp = self.orbit_model.generate_orbit(self.speed, health_state)
-                orbit_metrics = self.orbit_model.compute_metrics(x_disp, y_disp)
-                orbit_amplitude = orbit_metrics['orbit_amplitude']
-                sync_amplitude = orbit_metrics['sync_amplitude']
-        else:
-            x_disp, y_disp = self.orbit_model.generate_orbit(self.speed, health_state)
-            orbit_metrics = self.orbit_model.compute_metrics(x_disp, y_disp)
-            orbit_amplitude = orbit_metrics['orbit_amplitude']
-            sync_amplitude = orbit_metrics['sync_amplitude']
-        
-        # Check vibration trip
+                pass
+
+        # Check vibration trip - orbit_amplitude is displacement in mm (API 617)
         if orbit_amplitude > self.LIMITS['vibration_trip'] * 2:
             raise Exception("F_HIGH_VIBRATION")
         
@@ -903,7 +904,13 @@ class CentrifugalCompressor:
             'health_seal_primary': round(seal_state['primary_health'], 4),
             'health_seal_secondary': round(seal_state['secondary_health'], 4),
         }
-        
+
+        # Add enhanced velocity metrics if available (for ML features)
+        if vib_rms is not None:
+            state['vibration_rms'] = round(vib_rms, 4)
+        if vib_peak is not None:
+            state['vibration_peak'] = round(vib_peak, 4)
+
         # Add fault information if enabled
         if self.use_faults:
             try:
