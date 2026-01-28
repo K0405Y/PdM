@@ -59,6 +59,39 @@ Where:
 - `a`: Degradation rate coefficient
 - `b`: Degradation acceleration exponent
 
+**Health Range Constraint**:
+
+The degradation formula has a mathematical constraint: maximum possible health is `1 - d`. For example, with `d = 0.04`, the maximum health is 0.96. If initial health exceeds this limit, the standard time-to-failure (ttf) calculation fails because `log(1 - d - h)` produces a negative argument.
+
+**Hybrid Health Generator**:
+
+To handle cases where initial health exceeds the formula's maximum (e.g., initial fuel health of 0.98 when d=0.04 limits max to 0.96), the health model uses a hybrid approach:
+
+1. **Phase 1 (Linear Degradation)**: When `initial_health > 1 - d`, health degrades linearly at a slow rate until it reaches the formula's valid range
+2. **Phase 2 (Exponential Degradation)**: Once health is within the valid range, the standard exponential formula takes over
+
+```python
+def _hybrid_health_generator(initial_health, max_formula_health, d, a, b, threshold):
+    linear_rate = 0.00002  # Per timestep
+    current_health = initial_health
+
+    # Phase 1: Linear degradation until within formula range
+    while current_health > max_formula_health:
+        if current_health < threshold:
+            return
+        yield t_virtual, current_health
+        current_health -= linear_rate * (1.0 + random.gauss(0, 0.05))
+
+    # Phase 2: Switch to exponential formula
+    transition_health = max_formula_health - 0.001
+    ttf = math.pow(math.log(1 - d - transition_health) / a, 1 / b)
+    for t in range(int(ttf), -1, -1):
+        h = 1 - d - math.exp(a * t**b)
+        if h < threshold:
+            break
+        yield t, h
+```
+
 **Failure Modes**:
 
 | Mode | Description | Parameters (d, a, b) | Threshold | Typical Lifespan |
@@ -660,9 +693,23 @@ Vibration patterns validated against:
 
 ### Initial Health Selection
 
+**Health Range Constraints**:
+
+Each component has a maximum initial health based on the degradation formula's asymptotic offset `d`:
+- `max_health = 1 - d`
+
+| Component | d value | Max Health | Recommended Range |
+|-----------|---------|------------|-------------------|
+| HGP | 0.05 | 0.95 | 0.50 - 0.95 |
+| Blade | 0.03 | 0.97 | 0.45 - 0.97 |
+| Bearing | 0.08 | 0.92 | 0.40 - 0.92 |
+| Fuel | 0.04 | 0.96 | 0.55 - 0.96 |
+
+**Note**: If initial health exceeds these limits, the hybrid health generator automatically uses linear degradation until health enters the valid formula range.
+
 **New Equipment** (commissioned < 1 year):
 ```python
-initial_health = {'hgp': 0.95, 'blade': 0.98, 'bearing': 0.95, 'fuel': 0.97}
+initial_health = {'hgp': 0.95, 'blade': 0.97, 'bearing': 0.92, 'fuel': 0.96}
 ```
 
 **Mid-Life** (2-4 years operation):
