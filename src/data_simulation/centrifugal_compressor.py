@@ -159,41 +159,38 @@ class DryGasSealModel:
         # Failure thresholds
         self.failure_threshold = 0.25
         
-    def step(self, 
+    def step(self,
              operating_severity: float = 1.0,
              contamination_factor: float = 1.0) -> dict:
         """
         Advance seal degradation by one hour.
-        
+
         Args:
             operating_severity: Multiplier for degradation rate
             contamination_factor: Additional factor for dirty gas
-            
+
         Returns:
-            dict: Current health and leakage values
-            
-        Raises:
-            Exception: When seal fails below threshold
+            dict: Current health, leakage values, and failure status
         """
-        result = {}
-        
+        result = {'failed_seal': None}
+
         for seal_type in self.SEAL_TYPES:
             # Apply degradation
             rate = self.degradation_rates[seal_type]
             effective_rate = rate * operating_severity * contamination_factor
             self.health[seal_type] -= effective_rate
-            
-            # Check for failure
-            if self.health[seal_type] < self.failure_threshold:
-                raise Exception(f"F_SEAL_{seal_type.upper()}")
-            
+
+            # Track which seal failed (if any)
+            if self.health[seal_type] < self.failure_threshold and result['failed_seal'] is None:
+                result['failed_seal'] = seal_type
+
             # Calculate leakage based on health
             health_factor = 1.0 / max(self.health[seal_type], 0.1)
             leakage = self.base_leakage[seal_type] * health_factor
-            
+
             result[f'{seal_type}_health'] = self.health[seal_type]
             result[f'{seal_type}_leakage'] = leakage
-            
+
         return result
 
 
@@ -395,12 +392,9 @@ class CentrifugalCompressorHealthModel:
         Advance health model by one time step.
 
         Returns:
-            dict: Current health values
-
-        Raises:
-            Exception: With failure mode code on failure
+            dict: Current health values and failure status
         """
-        updated_health = {}
+        updated_health = {'failed_mode': None}
 
         for mode, gen in self._generators.items():
             try:
@@ -415,7 +409,12 @@ class CentrifugalCompressorHealthModel:
                 self.health[mode] = h
                 updated_health[mode] = h
             except StopIteration:
-                raise Exception(f"F_{mode.upper()}")
+                # Track which mode failed (if any)
+                if updated_health['failed_mode'] is None:
+                    updated_health['failed_mode'] = mode
+                # Set health to threshold so we have a valid value
+                updated_health[mode] = self.failure_thresholds.get(mode, 0.4)
+                self.health[mode] = updated_health[mode]
 
         return updated_health
 
@@ -800,16 +799,16 @@ class CentrifugalCompressor:
             except:
                 pass
         
-        # 6. Advance health model
+        # 6. Advance health model - returns dict with 'failed_mode' key
         health_state = self.health_model.step(severity)
-        
+
         # 7. Adjust health for active faults if enabled
         if self.use_faults:
             try:
                 health_state = self.fault_sim.adjust_health_for_faults(health_state)
             except:
                 pass
-        
+
         # 8. Apply upset damage if enabled
         if self.use_upsets:
             try:
@@ -817,28 +816,16 @@ class CentrifugalCompressor:
                     health_state = self.upset_sim.calculate_upset_damage(health_state)
             except:
                 pass
-        
+
         # 9. Update process conditions
         self._update_process(health_state)
-        
-        # Check surge - degraded impeller shifts surge line
-        impeller_health = health_state.get('impeller', 1.0)
-        surge_margin = self.surge_model.calculate_surge_margin(
-            self.flow, self.head, impeller_health
-        )
-        if self.surge_model.is_surge_trip(surge_margin) and self.speed > 0:
-            raise Exception("F_SURGE")
-            
-        # Update seal condition (convert time step to hours)
+
+        # Update seal condition (convert time step to hours) - returns dict with 'failed_seal'
         seal_state = self.seal_model.step(severity / 3600)
-        
+
         # Update bearings
         self._update_bearings(health_state)
-        
-        # Check bearing temperature trip
-        if max(self.bearing_temp_de, self.bearing_temp_nde, self.thrust_bearing_temp) > self.LIMITS['bearing_temp_max']:
-            raise Exception("F_BEARING_TEMP")
-        
+
         # 10. Generate vibration metrics
         # Always use orbit model for displacement (mm) - used for API 617 trip checks
         x_disp, y_disp = self.orbit_model.generate_orbit(self.speed, health_state)
@@ -861,9 +848,36 @@ class CentrifugalCompressor:
             except:
                 pass
 
-        # Check vibration trip - orbit_amplitude is displacement in mm (API 617)
+        # Calculate surge margin
+        impeller_health = health_state.get('impeller', 1.0)
+        surge_margin = self.surge_model.calculate_surge_margin(
+            self.flow, self.head, impeller_health
+        )
+
+        # Calculate max bearing temperature
+        max_bearing_temp = max(self.bearing_temp_de, self.bearing_temp_nde, self.thrust_bearing_temp)
+
+        # === CHECK ALL FAILURE CONDITIONS ===
+        # Process-based trips are checked first to give them priority
+
+        # Check vibration trip (process-based)
         if orbit_amplitude > self.LIMITS['vibration_trip'] * 2:
             raise Exception("F_HIGH_VIBRATION")
+
+        # Check bearing temperature trip (process-based)
+        if max_bearing_temp > self.LIMITS['bearing_temp_max']:
+            raise Exception("F_BEARING_TEMP")
+
+        # Check surge trip (process-based)
+        if self.surge_model.is_surge_trip(surge_margin) and self.speed > 0:
+            raise Exception("F_SURGE")
+
+        # Check component health failures (health-based)
+        if health_state.get('failed_mode'):
+            raise Exception(f"F_{health_state['failed_mode'].upper()}")
+
+        if seal_state.get('failed_seal'):
+            raise Exception(f"F_SEAL_{seal_state['failed_seal'].upper()}")
         
         # 11. Check maintenance required if enabled
         if self.use_maintenance:
