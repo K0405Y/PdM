@@ -269,28 +269,38 @@ class VibrationSignalGenerator:
             signal += amp * np.sin(2 * np.pi * harm * f0 * t + self._phase)
             
         # Add fault signatures based on degraded health
+        # Non-linear amplitude growth enables F_VIB_TRIP before health failures
+
         # Bearing health affects bearing defect signatures
         bearing_health = health_state.get('bearing', 1.0)
-        if bearing_health < 0.7:
-            fault_amp = (0.7 - bearing_health) * 2.0  # Scale with degradation
+        if bearing_health < 0.75:
+            bearing_deg = 0.75 - bearing_health
+            # Non-linear: at health=0.35, fault_amp = 0.4*4 + 0.16*8 = 2.88 mm/s
+            fault_amp = bearing_deg * 4.0 + bearing_deg ** 2 * 8.0
             for harm in self.FAULT_SIGNATURES['bearing_defect']['harmonics']:
                 signal += fault_amp * np.sin(2 * np.pi * harm * f0 * t)
-                
+
         # Blade health affects rub signatures
         blade_health = health_state.get('blade', 1.0)
-        if blade_health < 0.75:
-            fault_amp = (0.75 - blade_health) * 1.5
+        if blade_health < 0.80:
+            blade_deg = 0.80 - blade_health
+            # Non-linear: at health=0.40, fault_amp = 0.4*3 + 0.16*6 = 2.16 mm/s
+            fault_amp = blade_deg * 3.0 + blade_deg ** 2 * 6.0
             for harm in self.FAULT_SIGNATURES['blade_rub']['harmonics']:
                 signal += fault_amp * np.sin(2 * np.pi * harm * f0 * t)
-                
+
         # General unbalance from hot gas path degradation
         hgp_health = health_state.get('hgp', 1.0)
-        if hgp_health < 0.8:
-            unbal_amp = (0.8 - hgp_health) * 2.5
+        if hgp_health < 0.85:
+            hgp_deg = 0.85 - hgp_health
+            # Non-linear: at health=0.45, unbal_amp = 0.4*3.5 + 0.16*5 = 2.2 mm/s
+            unbal_amp = hgp_deg * 3.5 + hgp_deg ** 2 * 5.0
             signal += unbal_amp * np.sin(2 * np.pi * f0 * t)
-            
-        # Add noise floor (instrumentation noise)
-        noise = np.random.normal(0, 0.05, n_samples)
+
+        # Add noise floor (instrumentation noise, increases with degradation)
+        avg_health = (bearing_health + blade_health + hgp_health) / 3
+        noise_level = 0.05 + 0.15 * (1.0 - avg_health)
+        noise = np.random.normal(0, noise_level, n_samples)
         signal += noise
         
         # Update phase for continuity
