@@ -69,14 +69,24 @@ class CavitationModel:
         self.npsh_margin_alarm = npsh_margin_alarm
         self.npsh_margin_trip = npsh_margin_trip
         
-    def calculate_npsh_required(self, 
+    def calculate_npsh_required(self,
                                  flow_ratio: float,
-                                 speed_ratio: float = 1.0) -> float:
-        """Calculate NPSHr based on operating point."""
+                                 speed_ratio: float = 1.0,
+                                 impeller_health: float = 1.0) -> float:
+        """Calculate NPSHr based on operating point and impeller health.
+
+        Degraded impellers have rougher surfaces and altered blade geometry,
+        increasing turbulence and NPSHr. This can trigger cavitation trips.
+        """
         base_npsh = self.npsh_required
         flow_factor = 1.0 + 0.5 * (flow_ratio - 1.0)**2
         speed_factor = speed_ratio ** 2
-        return base_npsh * flow_factor * speed_factor
+
+        # Impeller degradation increases NPSH required
+        # At health=1.0: factor=1.0, at health=0.35: factor=2.0
+        impeller_factor = 1.0 + 1.5 * (1.0 - impeller_health) ** 1.5
+
+        return base_npsh * flow_factor * speed_factor * impeller_factor
     
     def calculate_margin(self, npsh_available: float, npsh_required: float) -> float:
         """Calculate NPSH margin (NPSHa - NPSHr)."""
@@ -214,8 +224,11 @@ class PumpBearingModel:
                 
             if rpm > 0:
                 base_temp = self.ambient_temp + 20 * speed_factor
-                friction_heat = (1.0 - self.health[bearing]) * 50
-                load_heat = (load_factor - 1.0) * 10 if load_factor > 1 else 0
+                # Non-linear friction heat: accelerates as bearing degrades
+                # At health=1.0: 0, at health=0.5: 25°C, at health=0.28: 72°C
+                degradation = 1.0 - self.health[bearing]
+                friction_heat = 50 * degradation + 100 * degradation ** 2
+                load_heat = (load_factor - 1.0) * 15 if load_factor > 1 else 0
                 target_temp = base_temp + friction_heat + load_heat
             else:
                 target_temp = self.ambient_temp
@@ -258,23 +271,37 @@ class PumpBearingModel:
         signal += 0.2 * np.sin(2 * np.pi * 2 * f_shaft * t)
         
         # Add defect frequencies based on health
+        # Vibration increases non-linearly as bearings degrade toward failure
         for bearing in self.BEARING_TYPES:
             health = self.health[bearing]
-            
-            if health < 0.8:
-                degradation = 0.8 - health
+            degradation = 1.0 - health
+
+            # Outer race defect - appears early, grows with degradation
+            if health < 0.85:
                 f_bpfo = self.DEFECT_FREQS['outer_race'] * f_shaft
-                amp = degradation * 2.0
+                # Non-linear: at health=0.28, amp = 0.72 * 5.0 + 0.72^2 * 8.0 = 7.75
+                amp = degradation * 5.0 + degradation ** 2 * 8.0
                 signal += amp * np.sin(2 * np.pi * f_bpfo * t)
-                signal += amp * 0.3 * np.sin(2 * np.pi * (f_bpfo - f_shaft) * t)
-                signal += amp * 0.3 * np.sin(2 * np.pi * (f_bpfo + f_shaft) * t)
-                
+                signal += amp * 0.4 * np.sin(2 * np.pi * (f_bpfo - f_shaft) * t)
+                signal += amp * 0.4 * np.sin(2 * np.pi * (f_bpfo + f_shaft) * t)
+
+            # Inner race defect - appears later, severe amplitude
             if health < 0.6:
                 f_bpfi = self.DEFECT_FREQS['inner_race'] * f_shaft
-                amp = (0.6 - health) * 2.5
+                inner_deg = 0.6 - health
+                amp = inner_deg * 6.0 + inner_deg ** 2 * 12.0
                 signal += amp * np.sin(2 * np.pi * f_bpfi * t)
-                
-        signal += np.random.normal(0, 0.1, n_samples)
+
+            # Ball/roller defect and broadband noise increase near failure
+            if health < 0.45:
+                f_ball = self.DEFECT_FREQS['ball'] * f_shaft
+                ball_deg = 0.45 - health
+                amp = ball_deg * 8.0
+                signal += amp * np.sin(2 * np.pi * f_ball * t)
+                # Increased broadband noise from surface damage
+                signal += np.random.normal(0, ball_deg * 3.0, n_samples)
+
+        signal += np.random.normal(0, 0.15, n_samples)
         
         return signal
 
@@ -554,13 +581,15 @@ class CentrifugalPump:
         if bep_deviation > 20:
             severity *= (1.0 + 0.02 * (bep_deviation - 20))
             
+        flow_ratio = self.flow / self.design_flow if self.design_flow > 0 else 0
+        speed_ratio = self.speed / self.design_speed if self.design_speed > 0 else 1.0
         npsh_r = self.cavitation_model.calculate_npsh_required(
-            self.flow / self.design_flow if self.design_flow > 0 else 0
+            flow_ratio, speed_ratio, self.impeller_health
         )
         margin = self.cavitation_model.calculate_margin(self.npsh_available, npsh_r)
         if margin < 2.0:
             severity *= (1.0 + 0.5 * (2.0 - margin))
-            
+
         return severity
     
     def _update_impeller(self, severity: float) -> float:
@@ -602,19 +631,33 @@ class CentrifugalPump:
         self.discharge_pressure = self.suction_pressure + (self.fluid_density * 9.81 * self.head / 1000)
         
     def _update_motor(self):
-        """Update motor electrical state."""
+        """Update motor electrical state with health-based current increase.
+
+        Degraded bearings and impellers increase mechanical friction and hydraulic
+        losses, requiring more motor current. This can trigger motor overload.
+        """
         if self.speed <= 0:
             self.motor_current = 0
             return
-            
+
         if self.power > 0:
             # Calculate base motor current from power
             # Account for motor efficiency (~0.92) and power factor (~0.85)
-            self.motor_current = (self.power * 1000) / (math.sqrt(3) * 480 * 0.85 * 0.92)
+            base_current = (self.power * 1000) / (math.sqrt(3) * 480 * 0.85 * 0.92)
+
+            # Bearing degradation increases friction → higher current
+            avg_bearing_health = sum(self.bearing_model.health.values()) / len(self.bearing_model.health)
+            bearing_friction_factor = 1.0 + 0.25 * (1.0 - avg_bearing_health) ** 1.5
+
+            # Impeller degradation increases hydraulic losses → higher current
+            impeller_loss_factor = 1.0 + 0.20 * (1.0 - self.impeller_health) ** 1.5
+
+            # Combined effect
+            self.motor_current = base_current * bearing_friction_factor * impeller_loss_factor
         else:
             self.motor_current = 0
-            
-        # Add small random variation (not multiplicative overload)
+
+        # Add small random variation
         self.motor_current += random.uniform(-1, 2)
         
     def _approach(self, current: float, target: float, rate: float) -> float:
@@ -758,9 +801,12 @@ class CentrifugalPump:
         if vib_rms > self.LIMITS['vibration_trip']:
             raise Exception("F_HIGH_VIBRATION")
             
-        # Check cavitation
+        # Check cavitation - degraded impeller increases NPSH required
         flow_ratio = self.flow / self.design_flow if self.design_flow > 0 else 0
-        npsh_r = self.cavitation_model.calculate_npsh_required(flow_ratio)
+        speed_ratio = self.speed / self.design_speed if self.design_speed > 0 else 1.0
+        npsh_r = self.cavitation_model.calculate_npsh_required(
+            flow_ratio, speed_ratio, impeller_health
+        )
         npsh_margin = self.cavitation_model.calculate_margin(self.npsh_available, npsh_r)
         cav_severity = self.cavitation_model.get_severity(npsh_margin)
         
