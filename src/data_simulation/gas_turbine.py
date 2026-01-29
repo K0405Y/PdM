@@ -177,33 +177,33 @@ class GasTurbineHealthModel:
     def step(self, operating_severity: float = 1.0):
         """
         Advance health model by one time step.
-        
+
         Args:
             operating_severity: Multiplier for degradation rate (1.0 = normal)
                                Higher values accelerate degradation
-                               
+
         Returns:
-            dict: Current health values for all modes
-            
-        Raises:
-            Exception: With failure mode code when component fails
+            dict: Current health values for all modes and failure status
         """
-        updated_health = {}
-        
+        updated_health = {'failed_mode': None}
+
         for mode, gen in self._generators.items():
             try:
                 # Apply severity factor by potentially skipping steps
                 if operating_severity > 1.0 and random.random() < (operating_severity - 1.0):
                     next(gen)  # Extra degradation step
-                    
+
                 t_remaining, h = next(gen)
                 self.health[mode] = h
                 updated_health[mode] = h
             except StopIteration:
-                # This mode has reached failure
-                failure_code = f"F_{mode.upper()}"
-                raise Exception(failure_code)
-                
+                # Track which mode failed (if any)
+                if updated_health['failed_mode'] is None:
+                    updated_health['failed_mode'] = mode
+                # Set health to threshold so we have a valid value
+                updated_health[mode] = self.failure_thresholds.get(mode, 0.4)
+                self.health[mode] = updated_health[mode]
+
         return updated_health
 
 class VibrationSignalGenerator:
@@ -672,16 +672,16 @@ class GasTurbine:
             except:
                 pass
         
-        # 6. Advance health model (may raise exception on failure)
+        # 6. Advance health model - returns dict with 'failed_mode' key
         health_state = self.health_model.step(severity)
-        
+
         # 7. Adjust health for active faults if enabled
         if self.use_faults:
             try:
                 health_state = self.fault_sim.adjust_health_for_faults(health_state)
             except:
                 pass
-        
+
         # 8. Apply upset damage if enabled
         if self.use_upsets:
             try:
@@ -689,10 +689,10 @@ class GasTurbine:
                     health_state = self.upset_sim.calculate_upset_damage(health_state)
             except:
                 pass
-        
+
         # 9. Update thermodynamic state
         self._update_thermodynamics(health_state)
-        
+
         # 10. Generate vibration signal and compute metrics
         if self.use_enhanced_vibration:
             try:
@@ -722,10 +722,17 @@ class GasTurbine:
             vib_peak = self.vib_generator.compute_peak(vib_signal)
             vib_crest = 0
             vib_kurtosis = 0
-        
-        # Check for vibration trip
+
+        # === CHECK ALL FAILURE CONDITIONS ===
+        # Process-based trips are checked first to give them priority
+
+        # Check for vibration trip (process-based)
         if vib_rms > self.LIMITS['vib_trip']:
             raise Exception("F_VIB_TRIP")
+
+        # Check component health failures (health-based)
+        if health_state.get('failed_mode'):
+            raise Exception(f"F_{health_state['failed_mode'].upper()}")
         
         # 11. Check maintenance required if enabled
         if self.use_maintenance:
