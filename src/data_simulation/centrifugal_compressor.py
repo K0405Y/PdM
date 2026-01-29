@@ -88,21 +88,30 @@ class SurgeModel:
             return 0.0
         return (-self._b - math.sqrt(discriminant)) / (2 * self._a)
     
-    def calculate_surge_margin(self, flow: float, head: float) -> float:
+    def calculate_surge_margin(self, flow: float, head: float,
+                                impeller_health: float = 1.0) -> float:
         """
         Calculate current surge margin as percentage.
-        
+
         Args:
             flow: Current volumetric flow rate (m³/hr)
             head: Current polytropic head (kJ/kg)
-            
+            impeller_health: Impeller health (0-1), degradation shifts surge line
+
         Returns:
             float: Surge margin (%) - positive is safe, <0 is in surge
         """
         surge_flow = self.calculate_surge_flow(head)
         if surge_flow <= 0:
             return 100.0  # Far from surge
-        return ((flow - surge_flow) / surge_flow) * 100.0
+
+        # Impeller degradation shifts surge line to higher flows
+        # Fouled/damaged impeller has altered flow characteristics
+        # At health=1.0: shift=0%, at health=0.42: shift=15%
+        surge_shift_factor = 1.0 + 0.25 * (1.0 - impeller_health) ** 1.2
+        effective_surge_flow = surge_flow * surge_shift_factor
+
+        return ((flow - effective_surge_flow) / effective_surge_flow) * 100.0
     
     def is_surge_alarm(self, margin: float) -> bool:
         """Check if surge margin is in alarm condition."""
@@ -241,16 +250,21 @@ class ShaftOrbitModel:
         base_radius = 0.02  # mm - small orbit when healthy
         ellipticity = 0.2   # Slight ellipse
         
-        # Scale orbit with degradation
+        # Scale orbit with degradation - non-linear increase near failure
         impeller_health = health_state.get('impeller', 1.0)
         bearing_health = health_state.get('bearing', 1.0)
-        
-        # Unbalance increases orbit size
-        unbalance_factor = 1.0 + 2.0 * (1.0 - impeller_health)
-        
-        # Bearing wear increases orbit size and introduces harmonics
-        wear_factor = 1.0 + 3.0 * (1.0 - bearing_health)
-        
+
+        impeller_deg = 1.0 - impeller_health
+        bearing_deg = 1.0 - bearing_health
+
+        # Unbalance increases orbit size (impeller fouling/erosion)
+        # At health=0.42: deg=0.58, factor = 1 + 2*0.58 + 3*0.58^2 = 3.17
+        unbalance_factor = 1.0 + 2.0 * impeller_deg + 3.0 * impeller_deg ** 2
+
+        # Bearing wear increases orbit size with accelerating growth
+        # At health=0.38: deg=0.62, factor = 1 + 4*0.62 + 6*0.62^2 = 5.79
+        wear_factor = 1.0 + 4.0 * bearing_deg + 6.0 * bearing_deg ** 2
+
         orbit_radius = base_radius * unbalance_factor * wear_factor
         
         # Generate orbit signals
@@ -258,18 +272,21 @@ class ShaftOrbitModel:
         y = orbit_radius * (1 - ellipticity) * np.sin(omega * t + self.phase)
         
         # Add sub-synchronous whirl if bearing is degraded (oil whirl/whip)
-        if bearing_health < 0.6:
+        if bearing_health < 0.7:
             whirl_freq = 0.43 * omega  # Characteristic oil whirl frequency
-            whirl_amp = (0.6 - bearing_health) * 0.05
+            # Non-linear: severe whirl near failure threshold
+            whirl_deg = 0.7 - bearing_health
+            whirl_amp = whirl_deg * 0.08 + whirl_deg ** 2 * 0.15
             x += whirl_amp * np.cos(whirl_freq * t)
             y += whirl_amp * np.sin(whirl_freq * t)
-            
+
         # Add super-synchronous content if impeller damaged
-        if impeller_health < 0.7:
+        if impeller_health < 0.75:
             # Blade pass frequency effects
             n_blades = 8  # Typical impeller blade count
             blade_freq = n_blades * omega
-            blade_amp = (0.7 - impeller_health) * 0.01
+            blade_deg = 0.75 - impeller_health
+            blade_amp = blade_deg * 0.015 + blade_deg ** 2 * 0.03
             x += blade_amp * np.cos(blade_freq * t)
             y += blade_amp * np.sin(blade_freq * t)
             
@@ -689,20 +706,21 @@ class CentrifugalCompressor:
             self.bearing_temp_nde = self._approach(self.bearing_temp_nde, ambient, 0.02)
             self.thrust_bearing_temp = self._approach(self.thrust_bearing_temp, ambient, 0.02)
             return
-            
+
         bearing_health = health_state.get('bearing', 1.0)
         load_factor = self.speed / self.LIMITS['speed_rated']
-        
+        bearing_deg = 1.0 - bearing_health
+
         # Base temperature rise from load
         base_temp = 45 + 30 * load_factor
-        
-        # Friction heating from degraded bearings
-        friction_penalty = (1.0 - bearing_health) * 40
-        
+
+        # Non-linear friction heating from degraded bearings
+        friction_penalty = 50 * bearing_deg + 50 * bearing_deg ** 2
+
         target_de = base_temp + friction_penalty + random.gauss(0, 1)
-        target_nde = base_temp + friction_penalty * 0.8 + random.gauss(0, 1)
-        target_thrust = base_temp + friction_penalty * 1.2 + random.gauss(0, 1)
-        
+        target_nde = base_temp + friction_penalty * 0.85 + random.gauss(0, 1)
+        target_thrust = base_temp + friction_penalty * 1.25 + random.gauss(0, 1)
+
         self.bearing_temp_de = self._approach(self.bearing_temp_de, target_de, 0.1)
         self.bearing_temp_nde = self._approach(self.bearing_temp_nde, target_nde, 0.1)
         self.thrust_bearing_temp = self._approach(self.thrust_bearing_temp, target_thrust, 0.1)
@@ -803,8 +821,11 @@ class CentrifugalCompressor:
         # 9. Update process conditions
         self._update_process(health_state)
         
-        # Check surge
-        surge_margin = self.surge_model.calculate_surge_margin(self.flow, self.head)
+        # Check surge - degraded impeller shifts surge line
+        impeller_health = health_state.get('impeller', 1.0)
+        surge_margin = self.surge_model.calculate_surge_margin(
+            self.flow, self.head, impeller_health
+        )
         if self.surge_model.is_surge_trip(surge_margin) and self.speed > 0:
             raise Exception("F_SURGE")
             
