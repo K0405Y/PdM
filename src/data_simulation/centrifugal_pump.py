@@ -128,35 +128,30 @@ class MechanicalSealModel:
         self.failure_threshold = 0.30
         self.base_leakage = 0.5
         
-    def step(self, 
+    def step(self,
              operating_severity: float = 1.0,
              temperature_factor: float = 1.0,
              contamination_factor: float = 1.0) -> dict:
         """
         Advance seal degradation by one hour.
-        
+
         Returns:
-            dict: Seal health and leakage rate
-            
-        Raises:
-            Exception: When seal fails
+            dict: Seal health, leakage rate, and failure status
         """
-        effective_rate = (self.degradation_rate * 
-                         operating_severity * 
-                         temperature_factor * 
+        effective_rate = (self.degradation_rate *
+                         operating_severity *
+                         temperature_factor *
                          contamination_factor)
-        
+
         self.health -= effective_rate
-        
-        if self.health < self.failure_threshold:
-            raise Exception("F_SEAL")
-            
+
         leakage_factor = math.exp(2 * (1 - self.health))
         leakage = self.base_leakage * leakage_factor
-        
+
         return {
             'seal_health': self.health,
-            'leakage_rate': leakage
+            'leakage_rate': leakage,
+            'failed': self.health < self.failure_threshold
         }
 
 
@@ -198,30 +193,28 @@ class PumpBearingModel:
             'non_drive_end': self.ambient_temp
         }
         
-    def step(self, 
+    def step(self,
              rpm: float,
              load_factor: float = 1.0,
              lubrication_factor: float = 1.0) -> dict:
         """
         Advance bearing degradation.
-        
+
         Returns:
-            dict: Bearing health and temperature values
-            
-        Raises:
-            Exception: When bearing fails
+            dict: Bearing health, temperature values, and failure status
         """
-        result = {}
+        result = {'failed_bearing': None}
         speed_factor = (rpm / 3000) ** 0.5 if rpm > 0 else 0
-        
+
         for bearing in self.BEARING_TYPES:
             rate = self.degradation_rates[bearing]
             effective_rate = rate * speed_factor * load_factor * lubrication_factor
             self.health[bearing] -= effective_rate
-            
-            if self.health[bearing] < self.failure_threshold:
-                raise Exception(f"F_BEARING_{bearing.upper()}")
-                
+
+            # Track which bearing failed (if any)
+            if self.health[bearing] < self.failure_threshold and result['failed_bearing'] is None:
+                result['failed_bearing'] = bearing
+
             if rpm > 0:
                 base_temp = self.ambient_temp + 20 * speed_factor
                 # Non-linear friction heat: accelerates as bearing degrades
@@ -232,14 +225,14 @@ class PumpBearingModel:
                 target_temp = base_temp + friction_heat + load_heat
             else:
                 target_temp = self.ambient_temp
-                
+
             self.current_temps[bearing] = self._approach(
                 self.current_temps[bearing], target_temp, 0.08
             )
-            
+
             result[f'{bearing}_health'] = self.health[bearing]
             result[f'{bearing}_temp'] = self.current_temps[bearing]
-            
+
         return result
     
     def _approach(self, current: float, target: float, rate: float) -> float:
@@ -592,15 +585,13 @@ class CentrifugalPump:
 
         return severity
     
-    def _update_impeller(self, severity: float) -> float:
-        """Update impeller health and return current health."""
+    def _update_impeller(self, severity: float) -> tuple:
+        """Update impeller health and return (health, failed) tuple."""
         if self.speed > 0:
             self.impeller_health -= self.impeller_degradation_rate * severity / 3600
-            
-        if self.impeller_health < 0.35:
-            raise Exception("F_IMPELLER")
-            
-        return self.impeller_health
+
+        failed = self.impeller_health < 0.35
+        return self.impeller_health, failed
     
     def _update_hydraulics(self):
         """Update hydraulic state based on current operating conditions."""
@@ -747,34 +738,22 @@ class CentrifugalPump:
             except Exception as e:
                 pass
         
-        # 6. Update impeller (with adjusted severity)
-        impeller_health = self._update_impeller(severity)
-        
+        # 6. Update impeller (with adjusted severity) - returns (health, failed)
+        impeller_health, impeller_failed = self._update_impeller(severity)
+
         # 7. Update hydraulics
         self._update_hydraulics()
-        
+
         # 8. Update motor
         self._update_motor()
-        
-        # Check motor current
-        if self.motor_current > self.motor_rated_current * self.LIMITS['motor_current_max']:
-            raise Exception("F_MOTOR_OVERLOAD")
-            
-        # Update seals (convert to hours)
+
+        # Update seals (convert to hours) - returns dict with 'failed' key
         seal_state = self.seal_model.step(severity / 3600)
-        
-        # Update bearings
+
+        # Update bearings - returns dict with 'failed_bearing' key
         load_factor = self.flow / self.design_flow if self.design_flow > 0 else 1.0
         bearing_state = self.bearing_model.step(self.speed, load_factor)
-        
-        # Check bearing temperature
-        max_bearing_temp = max(
-            bearing_state['drive_end_temp'],
-            bearing_state['non_drive_end_temp']
-        )
-        if max_bearing_temp > self.LIMITS['bearing_temp_max']:
-            raise Exception("F_BEARING_OVERTEMP")
-            
+
         # 9. Generate vibration signal
         if self.use_enhanced_vibration:
             try:
@@ -796,12 +775,8 @@ class CentrifugalPump:
             vib_rms = np.sqrt(np.mean(vib_signal**2))
             vib_peak = np.max(np.abs(vib_signal))
             vib_enhanced = None
-        
-        # Check vibration trip
-        if vib_rms > self.LIMITS['vibration_trip']:
-            raise Exception("F_HIGH_VIBRATION")
-            
-        # Check cavitation - degraded impeller increases NPSH required
+
+        # Calculate cavitation parameters
         flow_ratio = self.flow / self.design_flow if self.design_flow > 0 else 0
         speed_ratio = self.speed / self.design_speed if self.design_speed > 0 else 1.0
         npsh_r = self.cavitation_model.calculate_npsh_required(
@@ -809,10 +784,43 @@ class CentrifugalPump:
         )
         npsh_margin = self.cavitation_model.calculate_margin(self.npsh_available, npsh_r)
         cav_severity = self.cavitation_model.get_severity(npsh_margin)
-        
+
+        # Calculate bearing temperature
+        max_bearing_temp = max(
+            bearing_state['drive_end_temp'],
+            bearing_state['non_drive_end_temp']
+        )
+
+        # === CHECK ALL FAILURE CONDITIONS ===
+        # Process-based trips are checked first to give them priority
+        # This ensures all failure types can occur in the simulation
+
+        # Check vibration trip (process-based)
+        if vib_rms > self.LIMITS['vibration_trip']:
+            raise Exception("F_HIGH_VIBRATION")
+
+        # Check bearing temperature trip (process-based)
+        if max_bearing_temp > self.LIMITS['bearing_temp_max']:
+            raise Exception("F_BEARING_OVERTEMP")
+
+        # Check motor overload (process-based)
+        if self.motor_current > self.motor_rated_current * self.LIMITS['motor_current_max']:
+            raise Exception("F_MOTOR_OVERLOAD")
+
+        # Check cavitation trip (process-based)
         if self.cavitation_model.is_trip_condition(npsh_margin) and self.speed > 0:
             raise Exception("F_CAVITATION")
-            
+
+        # Check component health failures (health-based)
+        if impeller_failed:
+            raise Exception("F_IMPELLER")
+
+        if seal_state.get('failed', False):
+            raise Exception("F_SEAL")
+
+        if bearing_state.get('failed_bearing'):
+            raise Exception(f"F_BEARING_{bearing_state['failed_bearing'].upper()}")
+
         # 10. Update operating hours
         if self.speed > 0:
             self.operating_hours += 1/3600
