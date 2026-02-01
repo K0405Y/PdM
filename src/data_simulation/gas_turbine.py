@@ -17,7 +17,7 @@ import numpy as np
 import random
 import math
 from datetime import datetime, timedelta
-from typing import Optional, Dict
+from typing import Optional
 
 # Import enhancements (with safe fallback if not available)
 try:
@@ -72,10 +72,10 @@ class GasTurbineHealthModel:
         
         # Different rates reflect real-world component lifespans
         self.degradation_params = degradation_params or {
-            'hgp': (0.05, -0.25, 0.22),      # Slow initial, accelerating
-            'blade': (0.03, -0.30, 0.20),    # Erosion is more gradual
-            'bearing': (0.08, -0.35, 0.25),  # Can fail faster
-            'fuel': (0.04, -0.20, 0.18)      # Fouling is gradual
+            'hgp': (0.05, -0.25, 0.22),      
+            'blade': (0.03, -0.30, 0.20),    
+            'bearing': (0.08, -0.35, 0.25),  
+            'fuel': (0.04, -0.20, 0.18)      
         }
         
         # Failure thresholds - below these, component is considered failed
@@ -83,7 +83,7 @@ class GasTurbineHealthModel:
             'hgp': 0.45,
             'blade': 0.40,
             'bearing': 0.35,
-            'fuel': 0.50
+            'fuel': 0.55
         }
         
         # Initialize time-to-failure generators
