@@ -23,7 +23,7 @@ from typing import Dict, Optional
 from dataclasses import dataclass
 import numpy as np
 import re
-from environmental_conditions import EnvironmentalConditions, LocationType
+from data_simulation.physics.environmental_conditions import EnvironmentalConditions, LocationType
 import requests
 import dotenv
 
