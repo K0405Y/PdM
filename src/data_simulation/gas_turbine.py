@@ -18,8 +18,6 @@ import random
 import math
 from datetime import datetime, timedelta
 from typing import Optional
-
-# Import enhancements (with safe fallback if not available)
 try:
     from .physics.vibration_enhanced import EnhancedVibrationGenerator, BearingGeometry
     from .physics.thermal_transient import ThermalTransientModel, ThermalMassProperties

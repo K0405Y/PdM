@@ -95,7 +95,7 @@ class MasterData:
         session = self.db.get_session()
         try:
             result = session.execute(text("""
-                SELECT compressor_id FROM master_data.centrifugal_compressors
+                SELECT compressor_id FROM master_data.compressors
                 WHERE status = 'active'
                 ORDER BY compressor_id
             """))
@@ -108,7 +108,7 @@ class MasterData:
         session = self.db.get_session()
         try:
             result = session.execute(text("""
-                SELECT pump_id FROM master_data.centrifugal_pumps
+                SELECT pump_id FROM master_data.pumps
                 WHERE status = 'active'
                 ORDER BY pump_id
             """))
@@ -150,14 +150,14 @@ class MasterData:
         return ids
 
     def seed_compressors(self, count: int) -> List[int]:
-        """Create centrifugal compressor records."""
+        """Create compressor records."""
         ids = []
         session = self.db.get_session()
 
         try:
             for i in range(count):
                 result = session.execute(text("""
-                    INSERT INTO master_data.centrifugal_compressors
+                    INSERT INTO master_data.compressors
                     (name, serial_number, location, installed_date,
                      design_flow_m3h, design_head_kj_kg,
                      initial_health_impeller, initial_health_bearing)
@@ -183,7 +183,7 @@ class MasterData:
         return ids
 
     def seed_pumps(self, count: int) -> List[int]:
-        """Create centrifugal pump records."""
+        """Create pump records."""
         ids = []
         services = [
             {'name': 'Crude Booster', 'flow': 200, 'head': 100, 'density': 850},
@@ -199,7 +199,7 @@ class MasterData:
             for i in range(count):
                 service = services[i % len(services)]
                 result = session.execute(text("""
-                    INSERT INTO master_data.centrifugal_pumps
+                    INSERT INTO master_data.pumps
                     (name, serial_number, service_type, location, installed_date,
                      design_flow_m3h, design_head_m, design_speed_rpm, fluid_density_kg_m3,
                      initial_health_impeller, initial_health_seal,
@@ -235,8 +235,8 @@ class MasterData:
         """Fetch equipment configurations from database."""
         tables = {
             'turbine': ('master_data.gas_turbines', 'turbine_id'),
-            'compressor': ('master_data.centrifugal_compressors', 'compressor_id'),
-            'pump': ('master_data.centrifugal_pumps', 'pump_id')
+            'compressor': ('master_data.compressors', 'compressor_id'),
+            'pump': ('master_data.pumps', 'pump_id')
         }
 
         table, id_col = tables[equipment_type]

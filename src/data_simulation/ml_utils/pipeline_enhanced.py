@@ -27,8 +27,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 # Import simulator classes (original imports would be here)
 # from src.data_generation.gas_turbine import GasTurbine
-# from src.data_generation.centrifugal_compressor import CentrifugalCompressor
-# from src.data_generation.centrifugal_pump import CentrifugalPump
+# from src.data_generation.compressor import Compressor
+# from src.data_generation.pump import Pump
 
 logger = logging.getLogger(__name__)
 

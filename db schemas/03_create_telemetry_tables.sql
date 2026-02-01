@@ -43,9 +43,9 @@ CREATE TABLE IF NOT EXISTS telemetry.gas_turbine_telemetry (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS telemetry.centrifugal_compressor_telemetry (
+CREATE TABLE IF NOT EXISTS telemetry.compressor_telemetry (
     telemetry_id BIGSERIAL PRIMARY KEY,
-    compressor_id INT NOT NULL REFERENCES master_data.centrifugal_compressors(compressor_id) ON DELETE CASCADE,
+    compressor_id INT NOT NULL REFERENCES master_data.compressors(compressor_id) ON DELETE CASCADE,
     sample_time TIMESTAMP NOT NULL,
     operating_hours FLOAT,
     -- Core measurements
@@ -97,9 +97,9 @@ CREATE TABLE IF NOT EXISTS telemetry.centrifugal_compressor_telemetry (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS telemetry.centrifugal_pump_telemetry (
+CREATE TABLE IF NOT EXISTS telemetry.pump_telemetry (
     telemetry_id BIGSERIAL PRIMARY KEY,
-    pump_id INT NOT NULL REFERENCES master_data.centrifugal_pumps(pump_id) ON DELETE CASCADE,
+    pump_id INT NOT NULL REFERENCES master_data.pumps(pump_id) ON DELETE CASCADE,
     sample_time TIMESTAMP NOT NULL,
     operating_hours FLOAT,
     -- Core measurements
@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS telemetry.centrifugal_pump_telemetry (
 -- Create indexes for efficient queries
 CREATE INDEX IF NOT EXISTS idx_gt_telemetry_turbine_time ON telemetry.gas_turbine_telemetry(turbine_id, sample_time DESC);
 CREATE INDEX IF NOT EXISTS idx_gt_telemetry_time ON telemetry.gas_turbine_telemetry(sample_time DESC);
-CREATE INDEX IF NOT EXISTS idx_cc_telemetry_compressor_time ON telemetry.centrifugal_compressor_telemetry(compressor_id, sample_time DESC);
-CREATE INDEX IF NOT EXISTS idx_cc_telemetry_time ON telemetry.centrifugal_compressor_telemetry(sample_time DESC);
-CREATE INDEX IF NOT EXISTS idx_cp_telemetry_pump_time ON telemetry.centrifugal_pump_telemetry(pump_id, sample_time DESC);
-CREATE INDEX IF NOT EXISTS idx_cp_telemetry_time ON telemetry.centrifugal_pump_telemetry(sample_time DESC);
+CREATE INDEX IF NOT EXISTS idx_cc_telemetry_compressor_time ON telemetry.compressor_telemetry(compressor_id, sample_time DESC);
+CREATE INDEX IF NOT EXISTS idx_cc_telemetry_time ON telemetry.compressor_telemetry(sample_time DESC);
+CREATE INDEX IF NOT EXISTS idx_cp_telemetry_pump_time ON telemetry.pump_telemetry(pump_id, sample_time DESC);
+CREATE INDEX IF NOT EXISTS idx_cp_telemetry_time ON telemetry.pump_telemetry(sample_time DESC);

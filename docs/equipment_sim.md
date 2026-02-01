@@ -286,7 +286,7 @@ print(f"Total: {len(telemetry)} telemetry, {len(failures)} failures")
 ```python
 from src.ingestion.equipment_sim import simulate_parallel
 from src.data_simulation.gas_turbine import GasTurbine
-from src.data_simulation.centrifugal_compressor import CentrifugalCompressor
+from src.data_simulation.compressor import Compressor
 
 # Configure equipment fleet
 configs = []
@@ -307,10 +307,10 @@ for i in range(10):
         }
     ))
 
-# 10 Centrifugal Compressors
+# 10 Compressors
 for i in range(10):
     configs.append((
-        CentrifugalCompressor,
+        Compressor,
         i + 11,  # equipment_id
         {
             'name': f'CC-{i+1:03d}',
@@ -377,7 +377,7 @@ for component, repairs in repairs_by_component.items():
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| equipment | object | required | Equipment simulator instance (GasTurbine, CentrifugalCompressor, etc.) |
+| equipment | object | required | Equipment simulator instance (GasTurbine, Compressor, etc.) |
 | equipment_id | int | required | Unique identifier for the equipment |
 | equipment_type | str | required | 'turbine', 'compressor', or 'pump' |
 | duration_days | int | required | Simulation duration in days |
@@ -470,5 +470,5 @@ turbine_tel, compressor_tel, pump_tel, failures = pipeline.simulate_equipment(
 - [data_pipeline.md](data_pipeline.md) - Pipeline orchestration
 - [bulk_insert.md](bulk_insert.md) - Fast database insertion
 - [gas_turbine.md](gas_turbine.md) - Gas turbine simulator
-- [centrifugal_compressor.md](centrifugal_compressor.md) - Compressor simulator
+- [compressor.md](compressor.md) - Compressor simulator
 - [maintenance_events.md](maintenance_events.md) - Maintenance scheduling module

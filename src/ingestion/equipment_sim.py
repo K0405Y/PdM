@@ -129,7 +129,7 @@ def simulate_equipment(equipment, equipment_id: int, equipment_type: str,
     the failed component is repaired and the equipment continues operation.
 
     Args:
-        equipment: Equipment simulator instance (GasTurbine, CentrifugalCompressor, etc.)
+        equipment: Equipment simulator instance (GasTurbine, Compressor, Pump, etc.)
         equipment_id: Equipment ID
         equipment_type: 'turbine', 'compressor', or 'pump'
         duration_days: Simulation duration in days

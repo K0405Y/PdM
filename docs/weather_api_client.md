@@ -703,5 +703,5 @@ Spot-check real weather against expected ranges:
 
 - [environmental_conditions.md](environmental_conditions.md) - Synthetic environmental modeling
 - [gas_turbine.md](gas_turbine.md) - Gas turbine integration with environmental conditions
-- [centrifugal_compressor.md](centrifugal_compressor.md) - Compressor environmental impacts
-- [centrifugal_pump.md](centrifugal_pump.md) - Pump cold weather considerations
+- [compressor.md](compressor.md) - Compressor environmental impacts
+- [pump.md](pump.md) - Pump cold weather considerations

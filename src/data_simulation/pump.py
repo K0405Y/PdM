@@ -1,7 +1,7 @@
 """
-Centrifugal Pump Data Simulator 
+Pump Data Simulator
 
-This module simulates industrial centrifugal pumps typical of offshore platforms,
+This module simulates industrial pumps typical of offshore platforms,
 refineries, and process facilities. Pumps are the most numerous rotating equipment
 in oil & gas operations, critical for production continuity and safety.
 
@@ -39,9 +39,9 @@ except ImportError:
 
 class CavitationModel:
     """
-    Models cavitation phenomena in centrifugal pumps.
+    Models cavitation phenomena in pumps.
     
-    Cavitation occurs when NPSH available (NPSHa) drops below NPSH required (NPSHr),
+    Cavitation occurs when Net Positive Suction Head available (NPSHa) drops below NPSH required (NPSHr),
     causing vapor bubbles to form and collapse. This is detected through:
     - NPSH margin monitoring
     - High-frequency acoustic emissions (15-100 kHz)
@@ -110,7 +110,7 @@ class CavitationModel:
 
 class MechanicalSealModel:
     """
-    Models mechanical seal health and leakage in centrifugal pumps.
+    Models mechanical seal health and leakage in pumps.
     """
     
     def __init__(self, 
@@ -357,9 +357,9 @@ class HydraulicPerformanceModel:
         return abs((flow - bep_flow) / bep_flow) * 100
 
 
-class CentrifugalPump:
+class Pump:
     """
-    Industrial Centrifugal Pump Simulator for Predictive Maintenance.
+    Industrial Pump Simulator for Predictive Maintenance.
     
     Operating Envelope (based on API 610):
     - Speed: 1,000 - 6,000 RPM
@@ -397,7 +397,7 @@ class CentrifugalPump:
                  enable_process_upsets: bool = True,
                  output_mode = None):
         """
-        Initialize centrifugal pump simulator with optional enhancements.
+        Initialize pump simulator with optional enhancements.
 
         Args:
             name: Equipment identifier
@@ -520,7 +520,7 @@ class CentrifugalPump:
         if self.use_maintenance:
             try:
                 self.maintenance_scheduler = MaintenanceScheduler(
-                    equipment_type='centrifugal_pump',
+                    equipment_type='pump',
                     base_mtbf=40000,
                     base_cbm_threshold=0.85
                 )
@@ -530,7 +530,7 @@ class CentrifugalPump:
         if self.use_faults:
             try:
                 self.fault_simulator = IncipientFaultSimulator(
-                    equipment_type='centrifugal_pump',
+                    equipment_type='pump',
                     fault_components=['impeller', 'seal', 'bearing_de', 'bearing_nde'],
                     degradation_rates={'impeller': 0.00003, 'seal': 0.00002,
                                      'bearing_de': 0.00015, 'bearing_nde': 0.00015}
@@ -541,7 +541,7 @@ class CentrifugalPump:
         if self.use_upsets:
             try:
                 self.upset_simulator = ProcessUpsetSimulator(
-                    equipment_type='centrifugal_pump',
+                    equipment_type='pump',
                     base_frequency=0.1,
                     duration_range=(100, 500)
                 )
@@ -923,7 +923,7 @@ def generate_pump_dataset(
     random_seed: int = None
 ) -> tuple:
     """
-    Generate run-to-failure dataset for multiple centrifugal pumps.
+    Generate run-to-failure dataset for multiple pumps.
     
     Args:
         n_machines: Number of pumps to simulate
@@ -960,7 +960,7 @@ def generate_pump_dataset(
             'bearing_nde': random.uniform(0.75, 0.96)
         }
         
-        pump = CentrifugalPump(
+        pump = Pump(
             machine_id,
             initial_health,
             design_flow=service['design_flow'] * random.uniform(0.9, 1.1),
@@ -1012,9 +1012,9 @@ def generate_pump_dataset(
 
 
 if __name__ == '__main__':
-    print("Centrifugal Pump Simulator - Example Run")
+    print("Pump Simulator - Example Run")
     
-    pump = CentrifugalPump(
+    pump = Pump(
         name="CP-001",
         initial_health={
             'impeller': 0.88,

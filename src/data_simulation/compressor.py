@@ -1,8 +1,8 @@
 """
-Centrifugal Compressor Data Simulator 
+Compressor Data Simulator 
 
-This module simulates an industrial centrifugal compressor typical of pipeline
-networks, LNG facilities, and refinery process units. Centrifugal compressors 
+This module simulates an industrial compressor typical of pipeline
+networks, LNG facilities, and refinery process units. Compressors 
 are critical high-speed rotating equipment requiring sophisticated surge 
 protection and condition monitoring.
 
@@ -40,7 +40,7 @@ except ImportError:
 
 class SurgeModel:
     """
-    Models the surge characteristics of a centrifugal compressor.
+    Models the surge characteristics of a compressor.
     
     Surge is the most dangerous operational event - a violent flow reversal
     that can damage impellers and thrust bearings. This model tracks the
@@ -123,7 +123,7 @@ class SurgeModel:
 
 class DryGasSealModel:
     """
-    Models dry gas seal health and leakage for centrifugal compressors.
+    Models dry gas seal health and leakage for compressors.
     
     Dry gas seals are critical for preventing process gas leakage along
     the compressor shaft. Primary and secondary seal health are tracked
@@ -327,9 +327,9 @@ class ShaftOrbitModel:
         }
 
 
-class CentrifugalCompressorHealthModel:
+class CompressorHealthModel:
     """
-    Manages degradation pathways specific to centrifugal compressors.
+    Manages degradation pathways specific to compressors.
     """
     
     FAILURE_MODES = {
@@ -419,11 +419,11 @@ class CentrifugalCompressorHealthModel:
         return updated_health
 
 
-class CentrifugalCompressor:
+class Compressor:
     """
-    Industrial Centrifugal Compressor Simulator for Predictive Maintenance.
-    
-    Simulates a centrifugal compressor typical of pipeline networks and LNG
+    Industrial Compressor Simulator for Predictive Maintenance.
+
+    Simulates a compressor typical of pipeline networks and LNG
     facilities with realistic operating parameters, surge protection, and
     dry gas seal monitoring.
     
@@ -468,7 +468,7 @@ class CentrifugalCompressor:
                  enable_process_upsets: bool = True,
                  output_mode = None):
         """
-        Initialize centrifugal compressor simulator.
+        Initialize compressor simulator.
 
         Args:
             name: Unique identifier
@@ -505,7 +505,7 @@ class CentrifugalCompressor:
         self.head = 0.0
         
         # Component models
-        self.health_model = CentrifugalCompressorHealthModel(initial_health)
+        self.health_model = CompressorHealthModel(initial_health)
         self.surge_model = SurgeModel(design_flow, design_head)
         self.seal_model = DryGasSealModel()
         self.orbit_model = ShaftOrbitModel()
@@ -982,7 +982,7 @@ def generate_compressor_dataset(
     random_seed: int = None
 ) -> tuple:
     """
-    Generate run-to-failure dataset for multiple centrifugal compressors.
+    Generate run-to-failure dataset for multiple compressors.
     
     Args:
         n_machines: Number of compressors to simulate
@@ -1008,7 +1008,7 @@ def generate_compressor_dataset(
             'bearing': random.uniform(0.70, 0.95)
         }
         
-        compressor = CentrifugalCompressor(
+        compressor = Compressor(
             machine_id,
             initial_health,
             design_flow=random.uniform(1200, 1800),
@@ -1046,7 +1046,7 @@ def generate_compressor_dataset(
                 'machineID': machine_id,
                 'level': 'CRITICAL',
                 'code': str(e),
-                'message': CentrifugalCompressorHealthModel.FAILURE_MODES.get(
+                'message': CompressorHealthModel.FAILURE_MODES.get(
                     str(e), 'Unknown failure'
                 )
             })
@@ -1055,9 +1055,9 @@ def generate_compressor_dataset(
 
 
 if __name__ == '__main__':
-    print("Centrifugal Compressor Simulator - Example Run")
+    print("Compressor Simulator - Example Run")
     
-    cc = CentrifugalCompressor(
+    cc = Compressor(
         name="CC-001",
         initial_health={
             'impeller': 0.88,

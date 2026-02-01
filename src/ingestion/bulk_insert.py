@@ -172,8 +172,8 @@ def bulk_insert_telemetry(db, records: List[Dict], equipment_type: str) -> int:
     # Get configuration for equipment type
     config = {
         'turbine': (TURBINE_COLUMNS, TURBINE_DEFAULTS, 'gas_turbine_telemetry'),
-        'compressor': (COMPRESSOR_COLUMNS, COMPRESSOR_DEFAULTS, 'centrifugal_compressor_telemetry'),
-        'pump': (PUMP_COLUMNS, PUMP_DEFAULTS, 'centrifugal_pump_telemetry')
+        'compressor': (COMPRESSOR_COLUMNS, COMPRESSOR_DEFAULTS, 'compressor_telemetry'),
+        'pump': (PUMP_COLUMNS, PUMP_DEFAULTS, 'pump_telemetry')
     }
 
     columns_map, defaults, table = config[equipment_type]
@@ -235,13 +235,13 @@ def insert_failures(db, failures: List[Dict]) -> int:
                        'speed_rpm_at_failure', 'egt_celsius_at_failure', 'vibration_mm_s_at_failure']
         },
         'compressor': {
-            'table': 'failure_events.centrifugal_compressor_failures',
+            'table': 'failure_events.compressor_failures',
             'id_col': 'compressor_id',
             'columns': ['failure_time', 'operating_hours_at_failure', 'failure_mode_code',
                        'speed_rpm_at_failure', 'surge_margin_at_failure', 'vibration_amplitude_at_failure']
         },
         'pump': {
-            'table': 'failure_events.centrifugal_pump_failures',
+            'table': 'failure_events.pump_failures',
             'id_col': 'pump_id',
             'columns': ['failure_time', 'operating_hours_at_failure', 'failure_mode_code',
                        'speed_rpm_at_failure', 'vibration_mm_s_at_failure', 'cavitation_margin_at_failure']

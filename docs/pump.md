@@ -1,8 +1,8 @@
-# Centrifugal Pump Simulator Module
+# Pump Simulator Module
 
 ## Overview
 
-The `centrifugal_pump.py` module simulates industrial centrifugal pumps typical of offshore platforms, refineries, and process facilities. As the most numerous rotating equipment in oil & gas operations, pumps are critical for production continuity and safety. This simulator provides comprehensive cavitation modeling, hydraulic performance tracking, and mechanical seal health monitoring.
+The `pump.py` module simulates industrial pumps typical of offshore platforms, refineries, and process facilities. As the most numerous rotating equipment in oil & gas operations, pumps are critical for production continuity and safety. This simulator provides comprehensive cavitation modeling, hydraulic performance tracking, and mechanical seal health monitoring.
 
 ## Purpose
 
@@ -16,11 +16,11 @@ Centrifugal pumps represent the largest population of rotating equipment (50-70%
 
 ## Architecture Overview
 
-The centrifugal pump follows the **modular enhancement architecture**:
+The pump follows the **modular enhancement architecture**:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                 CentrifugalPump Class                             │
+│                 Pump Class                             │
 │                  (Core Simulator)                                 │
 ├──────────────────────────────────────────────────────────────────┤
 │                                                                   │
@@ -193,7 +193,7 @@ bep_flow = design_flow * speed_ratio
 deviation(%) = abs((flow - bep_flow) / bep_flow) * 100
 ```
 
-### CentrifugalPump Class
+### Pump Class
 
 **Operating Limits** (API 610):
 
@@ -311,7 +311,7 @@ Eight pre-configured location profiles model diverse environmental conditions af
 ```python
 from physics.environmental_conditions import LocationType
 
-pump = CentrifugalPump(
+pump = Pump(
     name='CP-001',
     location_type=LocationType.SAVANNA,  # South African installation
     enable_environmental=True
@@ -332,7 +332,7 @@ env_source = create_hybrid_environment(
     cache_enabled=True
 )
 
-pump = CentrifugalPump(
+pump = Pump(
     name='CP-001',
     env_model=env_source,  # Use real weather data directly
     enable_environmental=True
@@ -419,7 +419,7 @@ if self.use_upsets:
 
 ### Head-Flow Curve Shape
 
-Typical centrifugal pump curve:
+Typical pump curve:
 
 ```
   Head
@@ -521,9 +521,9 @@ Pump characteristic that increases with:
 ### Basic Pump Simulation
 
 ```python
-from centrifugal_pump import CentrifugalPump
+from pump import Pump
 
-pump = CentrifugalPump(
+pump = Pump(
     name='CP-001',
     initial_health={
         'impeller': 0.90,
@@ -560,11 +560,11 @@ for i in range(3600):
 ### Pump with All Enhancements
 
 ```python
-from centrifugal_pump import CentrifugalPump
+from pump import Pump
 from physics.environmental_conditions import LocationType
 from ml_utils.ml_output_modes import OutputMode
 
-pump = CentrifugalPump(
+pump = Pump(
     name='CP-001',
     initial_health={
         'impeller': 0.88,
@@ -607,7 +607,7 @@ for i in range(3600):
 ### Pump with Real Weather API (Nigerian Coastal Installation)
 
 ```python
-from centrifugal_pump import CentrifugalPump
+from pump import Pump
 from physics.weather_api_client import create_hybrid_environment
 from physics.environmental_conditions import EnvironmentalConditions, LocationType
 from ml_utils.ml_output_modes import OutputMode
@@ -627,7 +627,7 @@ env_source = create_hybrid_environment(
     cache_ttl_hours=24
 )
 
-pump = CentrifugalPump(
+pump = Pump(
     name='CP-PH-001',
     initial_health={
         'impeller': 0.92,
@@ -682,7 +682,7 @@ for hour in range(720):
 ### Multiple Pump Services
 
 ```python
-from centrifugal_pump import generate_pump_dataset
+from pump import generate_pump_dataset
 
 # Generate dataset with varied pump services
 telemetry, failures = generate_pump_dataset(
@@ -711,9 +711,9 @@ for service, records in by_service.items():
 ### Cavitation Monitoring
 
 ```python
-from centrifugal_pump import CentrifugalPump
+from pump import Pump
 
-pump = CentrifugalPump(
+pump = Pump(
     name='CP-001',
     design_flow=150,
     design_head=80,
@@ -802,7 +802,7 @@ for i in range(1000):
 ### Operating Envelope
 
 Based on:
-- API 610: Centrifugal Pumps for Petroleum Industry
+- API 610: Pumps for Petroleum Industry
 - Hydraulic Institute Standards
 - Flowserve and Sulzer pump specifications
 
@@ -833,7 +833,7 @@ Limits from:
 
 **Crude Oil Transfer**:
 ```python
-pump = CentrifugalPump(
+pump = Pump(
     design_flow=200,
     design_head=100,
     fluid_density=850,  # Crude
@@ -843,7 +843,7 @@ pump = CentrifugalPump(
 
 **Seawater Injection**:
 ```python
-pump = CentrifugalPump(
+pump = Pump(
     design_flow=300,
     design_head=150,
     fluid_density=1025,  # Seawater
@@ -853,7 +853,7 @@ pump = CentrifugalPump(
 
 **Fire Water Service**:
 ```python
-pump = CentrifugalPump(
+pump = Pump(
     design_flow=400,
     design_head=120,
     fluid_density=1000,  # Water
@@ -907,11 +907,11 @@ pump = CentrifugalPump(
 
 ## References
 
-1. API 610:2010 - "Centrifugal Pumps for Petroleum, Petrochemical and Natural Gas Industries"
+1. API 610:2010 - "Pumps for Petroleum, Petrochemical and Natural Gas Industries"
 
 2. Hydraulic Institute. (2016). "Effects of Liquid Viscosity on Rotodynamic Pump Performance."
 
-3. Gülich, J. F. (2020). "Centrifugal Pumps" (4th ed.). Springer.
+3. Gülich, J. F. (2020). "Pumps" (4th ed.). Springer.
 
 4. Karassik, I. J., et al. (2008). "Pump Handbook" (4th ed.). McGraw-Hill.
 
@@ -922,7 +922,7 @@ pump = CentrifugalPump(
 ## See Also
 
 - [gas_turbine.md](gas_turbine.md) - Gas turbine simulation
-- [centrifugal_compressor.md](centrifugal_compressor.md) - Compressor with surge modeling
+- [compressor.md](compressor.md) - Compressor with surge modeling
 - [environmental_conditions.md](environmental_conditions.md) - Synthetic environmental modeling
 - [weather_api_client.md](weather_api_client.md) - Real weather API integration
 - [vibration_enhanced.md](vibration_enhanced.md) - Advanced bearing vibration

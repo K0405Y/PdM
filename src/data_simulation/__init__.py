@@ -3,8 +3,8 @@ Data Generation Package.
 
 Equipment Simulators:
 - gas_turbine: Industrial gas turbine simulation
-- centrifugal_compressor: Centrifugal compressor simulation
-- centrifugal_pump: Centrifugal pump simulation
+- compressor: Compressor simulation
+- pump: Pump simulation
 
 Physics Enhancements (physics/):
 - vibration_enhanced: Realistic bearing vibration with envelope modulation
@@ -22,15 +22,15 @@ ML Utilities (ml_utils/):
 """
 
 from .gas_turbine import GasTurbine, GasTurbineHealthModel, VibrationSignalGenerator
-from .centrifugal_compressor import (
-    CentrifugalCompressor,
-    CentrifugalCompressorHealthModel,
+from .compressor import (
+    Compressor,
+    CompressorHealthModel,
     SurgeModel,
     DryGasSealModel,
     ShaftOrbitModel
 )
-from .centrifugal_pump import (
-    CentrifugalPump,
+from .pump import (
+    Pump,
     CavitationModel,
     MechanicalSealModel,
     PumpBearingModel,
@@ -49,13 +49,13 @@ __all__ = [
     'GasTurbineHealthModel',
     'VibrationSignalGenerator',
     # Compressor
-    'CentrifugalCompressor',
-    'CentrifugalCompressorHealthModel',
+    'Compressor',
+    'CompressorHealthModel',
     'SurgeModel',
     'DryGasSealModel',
     'ShaftOrbitModel',
     # Pump
-    'CentrifugalPump',
+    'Pump',
     'CavitationModel',
     'MechanicalSealModel',
     'PumpBearingModel',

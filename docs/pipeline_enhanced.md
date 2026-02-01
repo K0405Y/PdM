@@ -100,7 +100,7 @@ def simulate_equipment_stream(self,
 ```
 
 **Parameters**:
-- `equipment`: Equipment simulator instance (GasTurbine, CentrifugalCompressor, CentrifugalPump)
+- `equipment`: Equipment simulator instance (GasTurbine, Compressor, Pump)
 - `equipment_id`: Unique equipment identifier
 - `equipment_type`: `'turbine'`, `'compressor'`, or `'pump'`
 
@@ -175,7 +175,7 @@ def simulate_single_equipment(args: Tuple) -> Tuple[List[Dict], List[Dict]]
 
 **Parameters**:
 - `args`: Tuple containing:
-  - `equipment_class`: Class reference (GasTurbine, CentrifugalCompressor, CentrifugalPump)
+  - `equipment_class`: Class reference (GasTurbine, Compressor, Pump)
   - `equipment_id`: Unique ID for this instance
   - `config`: Dict of equipment initialization parameters
   - `sim_params`: Dict with `duration_days`, `sample_interval`, `equipment_type`
@@ -216,12 +216,12 @@ def simulate_equipment_parallel(equipment_configs: List[Tuple],
 **Example**:
 ```python
 from gas_turbine import GasTurbine
-from centrifugal_compressor import CentrifugalCompressor
+from compressor import Compressor
 
 configs = [
     (GasTurbine, 1, {'name': 'GT-001'}, {'duration_days': 180, 'sample_interval': 10, 'equipment_type': 'turbine'}),
     (GasTurbine, 2, {'name': 'GT-002'}, {'duration_days': 180, 'sample_interval': 10, 'equipment_type': 'turbine'}),
-    (CentrifugalCompressor, 3, {'name': 'CC-001'}, {'duration_days': 180, 'sample_interval': 10, 'equipment_type': 'compressor'}),
+    (Compressor, 3, {'name': 'CC-001'}, {'duration_days': 180, 'sample_interval': 10, 'equipment_type': 'compressor'}),
     # ... 100 total equipment
 ]
 
@@ -485,7 +485,7 @@ for batch in GeneratorBasedSimulation.batch_generator(stream, batch_size=5000):
 ```python
 from pipeline_enhanced import ParallelSimulator
 from gas_turbine import GasTurbine
-from centrifugal_compressor import CentrifugalCompressor
+from compressor import Compressor
 
 # Define equipment configurations
 configs = []
@@ -502,7 +502,7 @@ for i in range(1, 51):
 # 30 compressors
 for i in range(51, 81):
     configs.append((
-        CentrifugalCompressor,
+        Compressor,
         i,
         {'name': f'CC-{i:03d}'},
         {'duration_days': 180, 'sample_interval': 10, 'equipment_type': 'compressor'}

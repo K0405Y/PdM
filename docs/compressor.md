@@ -1,8 +1,8 @@
-# Centrifugal Compressor Simulator Module
+# Compressor Simulator Module
 
 ## Overview
 
-The `centrifugal_compressor.py` module simulates industrial centrifugal compressors typical of pipeline networks, LNG facilities, and refinery process units. It provides comprehensive surge protection modeling, dry gas seal health tracking, and shaft orbit analysis for predictive maintenance applications.
+The `compressor.py` module simulates industrial compressors typical of pipeline networks, LNG facilities, and refinery process units. It provides comprehensive surge protection modeling, dry gas seal health tracking, and shaft orbit analysis for predictive maintenance applications.
 
 ## Purpose
 
@@ -118,7 +118,7 @@ Simulates shaft displacement measured by orthogonal proximity probes (X-Y sensor
 - Average gap: Time-averaged shaft position
 - Synchronous amplitude: 1X component magnitude
 
-### CentrifugalCompressorHealthModel Class
+### CompressorHealthModel Class
 
 Manages two primary degradation pathways.
 
@@ -145,7 +145,7 @@ if surge_margin < 20:
     severity *= (1.0 + 0.3 * (20 - surge_margin) / 20)
 ```
 
-### CentrifugalCompressor Class
+### Compressor Class
 
 **Operating Limits** (API 617, Industrial Standards):
 
@@ -252,7 +252,7 @@ Eight pre-configured location profiles model diverse environmental conditions af
 ```python
 from physics.environmental_conditions import LocationType
 
-compressor = CentrifugalCompressor(
+compressor = Compressor(
     name='CC-001',
     location_type=LocationType.SAHEL,  # Pre-configured African profile
     enable_environmental=True
@@ -273,7 +273,7 @@ env_source = create_hybrid_environment(
     cache_enabled=True
 )
 
-compressor = CentrifugalCompressor(
+compressor = Compressor(
     name='CC-001',
     env_model=env_source,  # Use real weather data directly
     enable_environmental=True
@@ -452,9 +452,9 @@ Typical surge line is parabolic in head-flow coordinates:
 ### Basic Compressor Simulation
 
 ```python
-from centrifugal_compressor import CentrifugalCompressor
+from compressor import Compressor
 
-compressor = CentrifugalCompressor(
+compressor = Compressor(
     name='CC-001',
     initial_health={'impeller': 0.88, 'bearing': 0.82},
     design_flow=1500,
@@ -482,11 +482,11 @@ for i in range(3600):
 ### Compressor with All Enhancements
 
 ```python
-from centrifugal_compressor import CentrifugalCompressor
+from compressor import Compressor
 from physics.environmental_conditions import LocationType
 from ml_utils.ml_output_modes import OutputMode
 
-compressor = CentrifugalCompressor(
+compressor = Compressor(
     name='CC-001',
     initial_health={'impeller': 0.85, 'bearing': 0.78},
     design_flow=1500,
@@ -521,7 +521,7 @@ for i in range(3600):
 ### Compressor with Real Weather API (African Installation)
 
 ```python
-from centrifugal_compressor import CentrifugalCompressor
+from compressor import Compressor
 from physics.weather_api_client import create_hybrid_environment
 from physics.environmental_conditions import EnvironmentalConditions, LocationType
 from ml_utils.ml_output_modes import OutputMode
@@ -541,7 +541,7 @@ env_source = create_hybrid_environment(
     cache_ttl_hours=24
 )
 
-compressor = CentrifugalCompressor(
+compressor = Compressor(
     name='CC-LG-001',
     initial_health={'impeller': 0.90, 'bearing': 0.85},
     design_flow=2500,
@@ -584,9 +584,9 @@ for hour in range(720):
 ### Shaft Orbit Analysis
 
 ```python
-from centrifugal_compressor import CentrifugalCompressor
+from compressor import Compressor
 
-compressor = CentrifugalCompressor(name='CC-001')
+compressor = Compressor(name='CC-001')
 compressor.set_speed(12000)
 
 state = compressor.next_state()
@@ -609,9 +609,9 @@ if state['orbit_amplitude'] > 0.05:
 ### Surge Scenario Simulation
 
 ```python
-from centrifugal_compressor import CentrifugalCompressor
+from compressor import Compressor
 
-compressor = CentrifugalCompressor(
+compressor = Compressor(
     name='CC-001',
     design_flow=1500,
     design_head=8000
@@ -707,8 +707,8 @@ for i in range(100):
 ### Operating Envelope
 
 Based on:
-- API 617: Axial and Centrifugal Compressors
-- Elliott centrifugal compressor specifications
+- API 617: Axial and Compressors
+- Elliott compressor specifications
 - Offshore platform operational data
 
 ### Surge Line
@@ -738,7 +738,7 @@ Validated against:
 
 **Pipeline Compression**:
 ```python
-compressor = CentrifugalCompressor(
+compressor = Compressor(
     design_flow=2000,       # High flow
     design_head=6000,       # Moderate head
     suction_pressure=3000   # Mid-range
@@ -747,7 +747,7 @@ compressor = CentrifugalCompressor(
 
 **LNG Refrigeration**:
 ```python
-compressor = CentrifugalCompressor(
+compressor = Compressor(
     design_flow=1200,       # Moderate flow
     design_head=10000,      # High head
     suction_pressure=500    # Low suction
@@ -811,7 +811,7 @@ compressor = CentrifugalCompressor(
 
 ## References
 
-1. API 617:2014 - "Axial and Centrifugal Compressors and Expander-compressors"
+1. API 617:2014 - "Axial and Compressors and Expander-compressors"
 
 2. API 670:2014 - "Machinery Protection Systems"
 
@@ -826,7 +826,7 @@ compressor = CentrifugalCompressor(
 ## See Also
 
 - [gas_turbine.md](gas_turbine.md) - Gas turbine simulation
-- [centrifugal_pump.md](centrifugal_pump.md) - Pump simulation with cavitation
+- [pump.md](pump.md) - Pump simulation with cavitation
 - [environmental_conditions.md](environmental_conditions.md) - Synthetic environmental modeling
 - [weather_api_client.md](weather_api_client.md) - Real weather API integration
 - [vibration_enhanced.md](vibration_enhanced.md) - Advanced vibration modeling

@@ -801,8 +801,8 @@ initial_health = {'hgp': 0.60, 'blade': 0.70, 'bearing': 0.55, 'fuel': 0.68}
 
 ## See Also
 
-- [centrifugal_compressor.md](centrifugal_compressor.md) - Compressor simulation with surge protection
-- [centrifugal_pump.md](centrifugal_pump.md) - Pump simulation with cavitation modeling
+- [compressor.md](compressor.md) - Compressor simulation with surge protection
+- [pump.md](pump.md) - Pump simulation with cavitation modeling
 - [environmental_conditions.md](environmental_conditions.md) - Synthetic environmental modeling with African location types
 - [weather_api_client.md](weather_api_client.md) - Real weather API integration and caching
 - [vibration_enhanced.md](vibration_enhanced.md) - Advanced vibration generation

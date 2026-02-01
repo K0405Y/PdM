@@ -331,20 +331,20 @@ The pipeline creates three schemas:
 ### master_data Schema
 
 - `gas_turbines`: Gas turbine equipment definitions
-- `centrifugal_compressors`: Compressor equipment definitions
-- `centrifugal_pumps`: Pump equipment definitions
+- `compressors`: Compressor equipment definitions
+- `pumps`: Pump equipment definitions
 
 ### telemetry Schema
 
 - `gas_turbine_telemetry`: Turbine sensor readings
-- `centrifugal_compressor_telemetry`: Compressor sensor readings
-- `centrifugal_pump_telemetry`: Pump sensor readings
+- `compressor_telemetry`: Compressor sensor readings
+- `pump_telemetry`: Pump sensor readings
 
 ### failure_events Schema
 
 - `gas_turbine_failures`: Turbine failure records
-- `centrifugal_compressor_failures`: Compressor failure records
-- `centrifugal_pump_failures`: Pump failure records
+- `compressor_failures`: Compressor failure records
+- `pump_failures`: Pump failure records
 
 ## Error Handling
 
@@ -404,8 +404,8 @@ from src.ingestion.bulk_insert import bulk_insert_telemetry, insert_failures
 
 # Equipment simulators
 from src.data_simulation.gas_turbine import GasTurbine
-from src.data_simulation.centrifugal_compressor import CentrifugalCompressor
-from src.data_simulation.centrifugal_pump import CentrifugalPump
+from src.data_simulation.compressor import Compressor
+from src.data_simulation.pump import Pump
 ```
 
 ## Best Practices
@@ -434,5 +434,5 @@ from src.data_simulation.centrifugal_pump import CentrifugalPump
 - [equipment_sim.md](equipment_sim.md) - Equipment simulation with maintenance cycles
 - [bulk_insert.md](bulk_insert.md) - Fast PostgreSQL bulk insertion
 - [gas_turbine.md](gas_turbine.md) - Gas turbine simulator documentation
-- [centrifugal_compressor.md](centrifugal_compressor.md) - Compressor simulator documentation
+- [compressor.md](compressor.md) - Compressor simulator documentation
 - [db_setup.md](db_setup.md) - Database setup and master data management

@@ -199,8 +199,8 @@ def insert_failures(
 
 **Failure Tables**:
 - `failure_events.gas_turbine_failures`
-- `failure_events.centrifugal_compressor_failures`
-- `failure_events.centrifugal_pump_failures`
+- `failure_events.compressor_failures`
+- `failure_events.pump_failures`
 
 **Failure Record Fields**:
 

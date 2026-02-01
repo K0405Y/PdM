@@ -30,8 +30,8 @@ from src.ingestion.bulk_insert import bulk_insert_telemetry, insert_failures
 
 # Import equipment simulators
 from src.data_simulation.gas_turbine import GasTurbine
-from src.data_simulation.centrifugal_compressor import CentrifugalCompressor
-from src.data_simulation.centrifugal_pump import CentrifugalPump
+from src.data_simulation.compressor import Compressor
+from src.data_simulation.pump import Pump
 
 # Setup logging
 logging.basicConfig(
@@ -107,8 +107,8 @@ class DataPipeline:
 
         Args:
             turbine_count: Number of gas turbines to create
-            compressor_count: Number of centrifugal compressors to create
-            pump_count: Number of centrifugal pumps to create
+            compressor_count: Number of compressors to create
+            pump_count: Number of pumps to create
 
         Returns:
             (turbine_ids, compressor_ids, pump_ids)
@@ -185,7 +185,7 @@ class DataPipeline:
                 'duration_days': self.duration_days,
                 'sample_interval_min': self.sample_interval_min
             }
-            configs.append((CentrifugalCompressor, config['compressor_id'], equipment_config, params))
+            configs.append((Compressor, config['compressor_id'], equipment_config, params))
 
         # Pumps
         pump_configs = self.master_data.get_configs(pump_ids, 'pump')
@@ -209,7 +209,7 @@ class DataPipeline:
                 'duration_days': self.duration_days,
                 'sample_interval_min': self.sample_interval_min
             }
-            configs.append((CentrifugalPump, config['pump_id'], equipment_config, params))
+            configs.append((Pump, config['pump_id'], equipment_config, params))
 
         # Run simulation (parallel or sequential)
         if use_parallel:
@@ -273,11 +273,11 @@ class DataPipeline:
             ).scalar()
 
             compressor_count = session.execute(
-                text("SELECT COUNT(*) FROM master_data.centrifugal_compressors WHERE status = 'active'")
+                text("SELECT COUNT(*) FROM master_data.compressors WHERE status = 'active'")
             ).scalar()
 
             pump_count = session.execute(
-                text("SELECT COUNT(*) FROM master_data.centrifugal_pumps WHERE status = 'active'")
+                text("SELECT COUNT(*) FROM master_data.pumps WHERE status = 'active'")
             ).scalar()
 
             # Count telemetry
@@ -286,11 +286,11 @@ class DataPipeline:
             ).scalar()
 
             cc_telemetry = session.execute(
-                text("SELECT COUNT(*) FROM telemetry.centrifugal_compressor_telemetry")
+                text("SELECT COUNT(*) FROM telemetry.compressor_telemetry")
             ).scalar()
 
             cp_telemetry = session.execute(
-                text("SELECT COUNT(*) FROM telemetry.centrifugal_pump_telemetry")
+                text("SELECT COUNT(*) FROM telemetry.pump_telemetry")
             ).scalar()
 
             # Count failures
@@ -299,11 +299,11 @@ class DataPipeline:
             ).scalar()
 
             cc_failures = session.execute(
-                text("SELECT COUNT(*) FROM failure_events.centrifugal_compressor_failures")
+                text("SELECT COUNT(*) FROM failure_events.compressor_failures")
             ).scalar()
 
             cp_failures = session.execute(
-                text("SELECT COUNT(*) FROM failure_events.centrifugal_pump_failures")
+                text("SELECT COUNT(*) FROM failure_events.pump_failures")
             ).scalar()
 
             # Print summary

@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS master_data.gas_turbines (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS master_data.centrifugal_compressors (
+CREATE TABLE IF NOT EXISTS master_data.compressors (
     compressor_id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL UNIQUE,
     serial_number VARCHAR(100),
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS master_data.centrifugal_compressors (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS master_data.centrifugal_pumps (
+CREATE TABLE IF NOT EXISTS master_data.pumps (
     pump_id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL UNIQUE,
     serial_number VARCHAR(100),
@@ -63,6 +63,6 @@ CREATE TABLE IF NOT EXISTS master_data.centrifugal_pumps (
 
 -- Create indexes on master tables
 CREATE INDEX IF NOT EXISTS idx_gas_turbines_status ON master_data.gas_turbines(status);
-CREATE INDEX IF NOT EXISTS idx_centrifugal_compressors_status ON master_data.centrifugal_compressors(status);
-CREATE INDEX IF NOT EXISTS idx_centrifugal_pumps_status ON master_data.centrifugal_pumps(status);
-CREATE INDEX IF NOT EXISTS idx_centrifugal_pumps_service_type ON master_data.centrifugal_pumps(service_type);
+CREATE INDEX IF NOT EXISTS idx_compressors_status ON master_data.compressors(status);
+CREATE INDEX IF NOT EXISTS idx_pumps_status ON master_data.pumps(status);
+CREATE INDEX IF NOT EXISTS idx_pumps_service_type ON master_data.pumps(service_type);
