@@ -131,8 +131,8 @@ class MasterData:
                     VALUES (:name, :sn, :loc, :date, :hgp, :blade, :bearing, :fuel)
                     RETURNING turbine_id
                 """), {
-                    'name': f"GT-{1001 + i}",
-                    'sn': f"SN-GT-{10001 + i}",
+                    'name': f"GT-{1 + i}",
+                    'sn': f"SN-GT-{1 + i}",
                     'loc': f"Platform-{i % 3 + 1}",
                     'date': datetime(2024, 1, 1).date() + timedelta(days=random.randint(0, 364)),
                     'hgp': random.uniform(0.70, 0.98),
@@ -164,8 +164,8 @@ class MasterData:
                     VALUES (:name, :sn, :loc, :date, :flow, :head, :imp, :bear)
                     RETURNING compressor_id
                 """), {
-                    'name': f"CC-{2001 + i}",
-                    'sn': f"SN-CC-{20001 + i}",
+                    'name': f"COMP-{1 + i}",
+                    'sn': f"SN-COMP-{1 + i}",
                     'loc': f"Facility-{i % 4 + 1}",
                     'date': datetime(2024, 1, 1).date() + timedelta(days=random.randint(0, 364)),
                     'flow': random.uniform(1200, 1800),
@@ -208,8 +208,8 @@ class MasterData:
                             :imp, :seal, :bde, :bnde)
                     RETURNING pump_id
                 """), {
-                    'name': f"CP-{3001 + i}",
-                    'sn': f"SN-CP-{30001 + i}",
+                    'name': f"PUMP-{1 + i}",
+                    'sn': f"SN-PUMP-{1 + i}",
                     'svc': service['name'],
                     'loc': f"Platform-{i % 5 + 1}",
                     'date': datetime(2024, 1, 1).date() + timedelta(days=random.randint(0, 364)),
