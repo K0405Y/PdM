@@ -379,24 +379,24 @@ def main():
         turbine_ids, compressor_ids, pump_ids = pipeline.seed_master_data(
             turbine_count=10,
             compressor_count=10,
-            pump_count=10
+            pump_count=50
         )
 
-        # Step 4: Run simulation
-        logger.info("\n--- STEP 4: Running Equipment Simulation ---")
-        turbine_tel, compressor_tel, pump_tel, failures = pipeline.simulate_equipment(
-            turbine_ids, compressor_ids, pump_ids,
-            use_parallel=True  # Use parallel processing for speed
-        )
+        # # Step 4: Run simulation
+        # logger.info("\n--- STEP 4: Running Equipment Simulation ---")
+        # turbine_tel, compressor_tel, pump_tel, failures = pipeline.simulate_equipment(
+        #     turbine_ids, compressor_ids, pump_ids,
+        #     use_parallel=True  # Use parallel processing for speed
+        # )
 
-        # Step 5: Ingest data
-        logger.info("\n--- STEP 5: Bulk Inserting Data ---")
-        pipeline.ingest_data(turbine_tel, compressor_tel, pump_tel, failures)
+        # # Step 5: Ingest data
+        # logger.info("\n--- STEP 5: Bulk Inserting Data ---")
+        # pipeline.ingest_data(turbine_tel, compressor_tel, pump_tel, failures)
 
-        # Step 6: Verify data
-        logger.info("\n--- STEP 6: Verifying Data Integrity ---")
-        pipeline.verify_data()
-        logger.info("PIPELINE EXECUTION COMPLETE")
+        # # Step 6: Verify data
+        # logger.info("\n--- STEP 6: Verifying Data Integrity ---")
+        # pipeline.verify_data()
+        # logger.info("PIPELINE EXECUTION COMPLETE")
         
     except Exception as e:
         logger.error(f"Pipeline failed: {e}", exc_info=True)
