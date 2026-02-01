@@ -22,13 +22,10 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional
 from dataclasses import dataclass
 import numpy as np
-
-try:
-    import requests
-    HAS_REQUESTS = True
-except ImportError:
-    HAS_REQUESTS = False
-
+import re
+from environmental_conditions import EnvironmentalConditions, LocationType
+import requests
+import dotenv
 
 @dataclass
 class WeatherConfig:
@@ -38,7 +35,7 @@ class WeatherConfig:
 
     # Location specification (use EITHER location_name OR lat/lon)
     location_name: str = ""  # e.g., "Lagos, Nigeria" or "Port Harcourt"
-    country: str = ""         # Optional country code (e.g., "NG", "KE") for disambiguation
+    country: str = ""         # Optional country code (e.g., "NG", "KE")
     latitude: float = 0.0     # Alternative: specify exact coordinates
     longitude: float = 0.0
 
@@ -105,8 +102,8 @@ class WeatherAPIClient(EnvironmentalDataSource):
         Args:
             config: Weather API configuration
         """
-        if not HAS_REQUESTS:
-            raise ImportError("requests library required for WeatherAPIClient. Install with: pip install requests")
+        # if not HAS_REQUESTS:
+        #     raise ImportError("requests library required for WeatherAPIClient. Install with: pip install requests")
 
         self.config = config
         self.last_call_time = 0.0
@@ -316,19 +313,35 @@ class CachedWeatherEnvironment(EnvironmentalDataSource):
             self._init_cache_db()
 
     def _init_cache_db(self):
-        """Initialize SQLite cache database."""
-        conn = sqlite3.connect(self.config.cache_db_path)
+        """Initialize SQLite cache database with location-specific filename."""
+        # Determine sanitized suffix from location
+        location_query = self.config.get_location_query()
+        suffix = re.sub(r'[^0-9A-Za-z_]', '_', location_query)[:50]
+        if re.match(r'^[0-9]', suffix):
+            suffix = f"t_{suffix}"
+
+        # Create location-specific database path
+        base_path = self.config.cache_db_path
+        if base_path.endswith('.db'):
+            self._cache_db_path = base_path[:-3] + f"_{suffix}.db"
+        else:
+            self._cache_db_path = f"{base_path}_{suffix}"
+
+        conn = sqlite3.connect(self._cache_db_path)
         cursor = conn.cursor()
 
+        self._cache_table_name = "weather_cache"
+
+        # Create the cache table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS weather_cache (
-                location_query TEXT,
-                timestamp TEXT,
-                ambient_temp_C REAL,
-                humidity_percent REAL,
-                pressure_kPa REAL,
-                cached_at TEXT,
-                PRIMARY KEY (location_query, timestamp)
+            location_query TEXT,
+            timestamp TEXT,
+            ambient_temp_C REAL,
+            humidity_percent REAL,
+            pressure_kPa REAL,
+            cached_at TEXT,
+            PRIMARY KEY (location_query, timestamp)
             )
         """)
 
@@ -389,7 +402,7 @@ class CachedWeatherEnvironment(EnvironmentalDataSource):
 
     def _get_from_cache(self, timestamp: datetime) -> Optional[Dict]:
         """Retrieve conditions from cache if available and fresh."""
-        conn = sqlite3.connect(self.config.cache_db_path)
+        conn = sqlite3.connect(self._cache_db_path)
         cursor = conn.cursor()
 
         location_query = self.config.get_location_query()
@@ -439,7 +452,7 @@ class CachedWeatherEnvironment(EnvironmentalDataSource):
 
     def _store_in_cache(self, timestamp: datetime, conditions: Dict):
         """Store conditions in cache."""
-        conn = sqlite3.connect(self.config.cache_db_path)
+        conn = sqlite3.connect(self._cache_db_path)
         cursor = conn.cursor()
 
         location_query = self.config.get_location_query()
@@ -563,7 +576,6 @@ if __name__ == '__main__':
 
     # Example 1: Synthetic fallback (no API key needed)
     print("\n SYNTHETIC ENVIRONMENT")
-    from environmental_conditions import EnvironmentalConditions, LocationType
 
     synthetic = EnvironmentalConditions(location_type=LocationType.SAHEL)
     conditions = synthetic.get_conditions(elapsed_hours=1000)
@@ -581,7 +593,8 @@ if __name__ == '__main__':
     print("2. Set environment variable: WEATHER_API_KEY=your_key_here")
     print("3. Run: python weather_api_client.py")
 
-    api_key = os.environ.get('WEATHER_API_KEY', '')
+    dotenv.load_dotenv()
+    api_key = os.getenv('WEATHER_API_KEY')
 
     if api_key:
         print("\nAPI key found - testing real weather fetch...")
