@@ -113,15 +113,15 @@ class MechanicalSealModel:
     Models mechanical seal health and leakage in pumps.
     """
     
-    def __init__(self, 
+    def __init__(self,
                  initial_health: float = 0.95,
-                 degradation_rate: float = 0.00008):
+                 degradation_rate: float = 0.000015):
         """
         Initialize mechanical seal model.
         
         Args:
             initial_health: Initial seal condition (0-1)
-            degradation_rate: Base degradation per operating hour
+            degradation_rate: Base degradation per step
         """
         self.health = initial_health
         self.degradation_rate = degradation_rate
@@ -218,9 +218,10 @@ class PumpBearingModel:
             if rpm > 0:
                 base_temp = self.ambient_temp + 20 * speed_factor
                 # Non-linear friction heat: accelerates as bearing degrades
-                # At health=1.0: 0, at health=0.5: 25°C, at health=0.28: 72°C
+                # Scaled so temp stays below trip (110°C) until health < failure threshold (0.28)
+                # At health=0.50: ~25°C, at health=0.28: ~44°C, at health=0.15: ~57°C
                 degradation = 1.0 - self.health[bearing]
-                friction_heat = 50 * degradation + 100 * degradation ** 2
+                friction_heat = 25 * degradation + 50 * degradation ** 2
                 load_heat = (load_factor - 1.0) * 15 if load_factor > 1 else 0
                 target_temp = base_temp + friction_heat + load_heat
             else:
@@ -270,10 +271,11 @@ class PumpBearingModel:
             degradation = 1.0 - health
 
             # Outer race defect - appears early, grows with degradation
+            # Scaled so combined bearing vibration stays below trip (7.0 mm/s)
+            # until bearing health drops below failure threshold (0.28)
             if health < 0.85:
                 f_bpfo = self.DEFECT_FREQS['outer_race'] * f_shaft
-                # Non-linear: at health=0.28, amp = 0.72 * 5.0 + 0.72^2 * 8.0 = 7.75
-                amp = degradation * 5.0 + degradation ** 2 * 8.0
+                amp = degradation * 3.5 + degradation ** 2 * 5.5
                 signal += amp * np.sin(2 * np.pi * f_bpfo * t)
                 signal += amp * 0.4 * np.sin(2 * np.pi * (f_bpfo - f_shaft) * t)
                 signal += amp * 0.4 * np.sin(2 * np.pi * (f_bpfo + f_shaft) * t)
@@ -282,17 +284,17 @@ class PumpBearingModel:
             if health < 0.6:
                 f_bpfi = self.DEFECT_FREQS['inner_race'] * f_shaft
                 inner_deg = 0.6 - health
-                amp = inner_deg * 6.0 + inner_deg ** 2 * 12.0
+                amp = inner_deg * 4.5 + inner_deg ** 2 * 9.0
                 signal += amp * np.sin(2 * np.pi * f_bpfi * t)
 
             # Ball/roller defect and broadband noise increase near failure
             if health < 0.45:
                 f_ball = self.DEFECT_FREQS['ball'] * f_shaft
                 ball_deg = 0.45 - health
-                amp = ball_deg * 8.0
+                amp = ball_deg * 6.0
                 signal += amp * np.sin(2 * np.pi * f_ball * t)
                 # Increased broadband noise from surface damage
-                signal += np.random.normal(0, ball_deg * 3.0, n_samples)
+                signal += np.random.normal(0, ball_deg * 2.0, n_samples)
 
         signal += np.random.normal(0, 0.15, n_samples)
         
@@ -442,7 +444,7 @@ class Pump:
         
         # Impeller health
         self.impeller_health = (initial_health or {}).get('impeller', 0.94)
-        self.impeller_degradation_rate = 0.00003
+        self.impeller_degradation_rate = 0.00001
         
         # Operating state
         self.speed = 0.0
@@ -588,7 +590,7 @@ class Pump:
     def _update_impeller(self, severity: float) -> tuple:
         """Update impeller health and return (health, failed) tuple."""
         if self.speed > 0:
-            self.impeller_health -= self.impeller_degradation_rate * severity / 3600
+            self.impeller_health -= self.impeller_degradation_rate * severity
 
         failed = self.impeller_health < 0.35
         return self.impeller_health, failed
@@ -747,8 +749,8 @@ class Pump:
         # Update motor
         self._update_motor()
 
-        # Update seals (convert to hours) - returns dict with 'failed' key
-        seal_state = self.seal_model.step(severity / 3600)
+        # Update seals - returns dict with 'failed' key
+        seal_state = self.seal_model.step(severity)
 
         # Update bearings - returns dict with 'failed_bearing' key
         load_factor = self.flow / self.design_flow if self.design_flow > 0 else 1.0
