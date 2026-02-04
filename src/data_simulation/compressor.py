@@ -858,26 +858,24 @@ class Compressor:
         max_bearing_temp = max(self.bearing_temp_de, self.bearing_temp_nde, self.thrust_bearing_temp)
 
         # === CHECK ALL FAILURE CONDITIONS ===
-        # Process-based trips are checked first to give them priority
+        # Health-based failures checked FIRST to ensure they can occur
 
-        # Check vibration trip (process-based)
-        if orbit_amplitude > self.LIMITS['vibration_trip'] * 2:
-            raise Exception("F_HIGH_VIBRATION")
-
-        # Check bearing temperature trip (process-based)
-        if max_bearing_temp > self.LIMITS['bearing_temp_max']:
-            raise Exception("F_BEARING_TEMP")
-
-        # Check surge trip (process-based)
-        if self.surge_model.is_surge_trip(surge_margin) and self.speed > 0:
-            raise Exception("F_SURGE")
-
-        # Check component health failures (health-based)
+        # 1. Check component health failures (health-based)
         if health_state.get('failed_mode'):
             raise Exception(f"F_{health_state['failed_mode'].upper()}")
 
         if seal_state.get('failed_seal'):
             raise Exception(f"F_SEAL_{seal_state['failed_seal'].upper()}")
+
+        # 2. Process-based trips (checked second)
+        if orbit_amplitude > self.LIMITS['vibration_trip'] * 2:
+            raise Exception("F_HIGH_VIBRATION")
+
+        if max_bearing_temp > self.LIMITS['bearing_temp_max']:
+            raise Exception("F_BEARING_TEMP")
+
+        if self.surge_model.is_surge_trip(surge_margin) and self.speed > 0:
+            raise Exception("F_SURGE")
         
         # 11. Check maintenance required if enabled
         if self.use_maintenance:
