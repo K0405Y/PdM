@@ -125,7 +125,7 @@ class MechanicalSealModel:
         """
         self.health = initial_health
         self.degradation_rate = degradation_rate
-        self.failure_threshold = 0.30
+        self.failure_threshold = 0.40
         self.base_leakage = 0.5
         
     def step(self,
@@ -374,7 +374,7 @@ class Pump:
         'speed_rated': 3000,
         'vibration_alarm': 4.5,
         'vibration_trip': 7.0,
-        'bearing_temp_max': 95,
+        'bearing_temp_max': 110,
         'seal_leakage_alarm': 10,
         'motor_current_max': 1.15,
     }
