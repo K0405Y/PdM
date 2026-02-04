@@ -144,10 +144,10 @@ class DryGasSealModel:
             'secondary': 0.98
         }
         
-        # Degradation rates (fraction per operating hour at severity 1.0)
+        # Degradation rates (fraction per step at severity 1.0)
         self.degradation_rates = {
-            'primary': 0.00005,   # Primary degrades faster
-            'secondary': 0.00002
+            'primary': 0.000015,   # Primary degrades faster
+            'secondary': 0.000010
         }
         
         # Leakage model parameters
@@ -255,12 +255,13 @@ class ShaftOrbitModel:
         bearing_deg = 1.0 - bearing_health
 
         # Unbalance increases orbit size (impeller fouling/erosion)
-        # At health=0.42: deg=0.58, factor = 1 + 2*0.58 + 3*0.58^2 = 3.17
-        unbalance_factor = 1.0 + 2.0 * impeller_deg + 3.0 * impeller_deg ** 2
+        # Scaled so vibration trip occurs BELOW health failure threshold (0.42)
+        # even when both components degrade simultaneously
+        unbalance_factor = 1.0 + 0.8 * impeller_deg + 1.2 * impeller_deg ** 2
 
         # Bearing wear increases orbit size with accelerating growth
-        # At health=0.38: deg=0.62, factor = 1 + 4*0.62 + 6*0.62^2 = 5.79
-        wear_factor = 1.0 + 4.0 * bearing_deg + 6.0 * bearing_deg ** 2
+        # Scaled so vibration trip occurs BELOW health failure threshold (0.38)
+        wear_factor = 1.0 + 1.0 * bearing_deg + 1.5 * bearing_deg ** 2
 
         orbit_radius = base_radius * unbalance_factor * wear_factor
         
@@ -271,9 +272,9 @@ class ShaftOrbitModel:
         # Add sub-synchronous whirl if bearing is degraded (oil whirl/whip)
         if bearing_health < 0.7:
             whirl_freq = 0.43 * omega  # Characteristic oil whirl frequency
-            # Non-linear: severe whirl near failure threshold
+            # Scaled so whirl doesn't cause vibration trip above bearing failure threshold
             whirl_deg = 0.7 - bearing_health
-            whirl_amp = whirl_deg * 0.08 + whirl_deg ** 2 * 0.15
+            whirl_amp = whirl_deg * 0.015 + whirl_deg ** 2 * 0.03
             x += whirl_amp * np.cos(whirl_freq * t)
             y += whirl_amp * np.sin(whirl_freq * t)
 
@@ -504,10 +505,18 @@ class Compressor:
         self.flow = 0.0
         self.head = 0.0
         
+        # Extract seal health from initial_health if provided
+        seal_health = None
+        if initial_health:
+            seal_health = {
+                'primary': initial_health.pop('seal_primary', 0.95),
+                'secondary': initial_health.pop('seal_secondary', 0.98)
+            }
+
         # Component models
         self.health_model = CompressorHealthModel(initial_health)
         self.surge_model = SurgeModel(design_flow, design_head)
-        self.seal_model = DryGasSealModel()
+        self.seal_model = DryGasSealModel(initial_health=seal_health)
         self.orbit_model = ShaftOrbitModel()
         
         # Bearing temperatures
@@ -714,7 +723,8 @@ class Compressor:
         base_temp = 45 + 30 * load_factor
 
         # Non-linear friction heating from degraded bearings
-        friction_penalty = 50 * bearing_deg + 50 * bearing_deg ** 2
+        # Scaled so temp stays below trip (110°C) until health < failure threshold (0.38)
+        friction_penalty = 25 * bearing_deg + 25 * bearing_deg ** 2
 
         target_de = base_temp + friction_penalty + random.gauss(0, 1)
         target_nde = base_temp + friction_penalty * 0.85 + random.gauss(0, 1)
@@ -820,8 +830,8 @@ class Compressor:
         # 9. Update process conditions
         self._update_process(health_state)
 
-        # Update seal condition (convert time step to hours) - returns dict with 'failed_seal'
-        seal_state = self.seal_model.step(severity / 3600)
+        # Update seal condition - returns dict with 'failed_seal'
+        seal_state = self.seal_model.step(severity)
 
         # Update bearings
         self._update_bearings(health_state)
