@@ -669,7 +669,7 @@ class Pump:
         Raises:
             Exception: With failure code on critical failure
         """
-        # 1. Apply environmental conditions if enabled
+        # Apply environmental conditions if enabled
         if self.use_environmental:
             try:
                 env_state = self.environmental_conditions.get_state()
@@ -689,10 +689,10 @@ class Pump:
         speed_rate = 0.15 if self.speed_target > self.speed else 0.20
         self.speed = self._approach(self.speed, self.speed_target, speed_rate)
         
-        # 2. Calculate operating severity (base level)
+        # Calculate operating severity (base level)
         severity = self._calculate_operating_severity()
         
-        # 3. Apply thermal transients if enabled
+        # Apply thermal transients if enabled
         thermal_multiplier = 1.0
         if self.use_thermal_model:
             try:
@@ -706,7 +706,7 @@ class Pump:
             except Exception as e:
                 pass
         
-        # 4. Check for incipient fault initiation if enabled
+        #Check for incipient fault initiation if enabled
         if self.use_faults:
             try:
                 fault_state = self.fault_simulator.step(
@@ -727,7 +727,7 @@ class Pump:
             except Exception as e:
                 pass
         
-        # 5. Check for process upsets if enabled
+        # Check for process upsets if enabled
         upset_damage = 1.0
         if self.use_upsets:
             try:
@@ -738,13 +738,13 @@ class Pump:
             except Exception as e:
                 pass
         
-        # 6. Update impeller (with adjusted severity) - returns (health, failed)
+        # Update impeller (with adjusted severity) - returns (health, failed)
         impeller_health, impeller_failed = self._update_impeller(severity)
 
-        # 7. Update hydraulics
+        # Update hydraulics
         self._update_hydraulics()
 
-        # 8. Update motor
+        # Update motor
         self._update_motor()
 
         # Update seals (convert to hours) - returns dict with 'failed' key
@@ -754,7 +754,7 @@ class Pump:
         load_factor = self.flow / self.design_flow if self.design_flow > 0 else 1.0
         bearing_state = self.bearing_model.step(self.speed, load_factor)
 
-        # 9. Generate vibration signal
+        # Generate vibration signal
         if self.use_enhanced_vibration:
             try:
                 vib_metrics = self.vibration_generator.generate(
@@ -791,25 +791,6 @@ class Pump:
             bearing_state['non_drive_end_temp']
         )
 
-        # === CHECK ALL FAILURE CONDITIONS ===
-        # Process-based trips are checked first to give them priority
-        # This ensures all failure types can occur in the simulation
-
-        # Check vibration trip (process-based)
-        if vib_rms > self.LIMITS['vibration_trip']:
-            raise Exception("F_HIGH_VIBRATION")
-
-        # Check bearing temperature trip (process-based)
-        if max_bearing_temp > self.LIMITS['bearing_temp_max']:
-            raise Exception("F_BEARING_OVERTEMP")
-
-        # Check motor overload (process-based)
-        if self.motor_current > self.motor_rated_current * self.LIMITS['motor_current_max']:
-            raise Exception("F_MOTOR_OVERLOAD")
-
-        # Check cavitation trip (process-based)
-        if self.cavitation_model.is_trip_condition(npsh_margin) and self.speed > 0:
-            raise Exception("F_CAVITATION")
 
         # Check component health failures (health-based)
         if impeller_failed:
@@ -821,11 +802,24 @@ class Pump:
         if bearing_state.get('failed_bearing'):
             raise Exception(f"F_BEARING_{bearing_state['failed_bearing'].upper()}")
 
-        # 10. Update operating hours
+        # Process-based trips 
+        if vib_rms > self.LIMITS['vibration_trip']:
+            raise Exception("F_HIGH_VIBRATION")
+
+        if max_bearing_temp > self.LIMITS['bearing_temp_max']:
+            raise Exception("F_BEARING_OVERTEMP")
+
+        if self.motor_current > self.motor_rated_current * self.LIMITS['motor_current_max']:
+            raise Exception("F_MOTOR_OVERLOAD")
+
+        if self.cavitation_model.is_trip_condition(npsh_margin) and self.speed > 0:
+            raise Exception("F_CAVITATION")
+
+        # Update operating hours
         if self.speed > 0:
             self.operating_hours += 1/3600
             
-        # 11. Apply maintenance scheduling if enabled
+        # Apply maintenance scheduling if enabled
         if self.use_maintenance:
             try:
                 maint_state = self.maintenance_scheduler.step(
@@ -890,7 +884,7 @@ class Pump:
             'health_bearing_nde': round(bearing_state['non_drive_end_health'], 4),
         }
         
-        # 12. Apply output formatting if enabled
+        #Apply output formatting if enabled
         if self.use_output_formatter and vib_enhanced:
             try:
                 formatted_state = self.output_formatter.format(state, vib_enhanced)
