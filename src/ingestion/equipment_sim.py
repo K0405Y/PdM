@@ -216,10 +216,30 @@ def simulate_equipment(equipment, equipment_id: int, equipment_type: str,
                 equipment.current_timestamp = sample_time
 
             # Apply additional degradation for increased failure rate
-            if degradation_multiplier > 1.0 and hasattr(equipment, 'health_model'):
-                for _ in range(int(degradation_multiplier) - 1):
-                    if random.random() < (degradation_multiplier % 1.0):
-                        equipment.health_model.step(1.0)
+            if degradation_multiplier > 1.0:
+                extra_steps = int(degradation_multiplier) - 1
+                fractional = degradation_multiplier % 1.0
+
+                if hasattr(equipment, 'health_model'):
+                    for _ in range(extra_steps):
+                        if random.random() < fractional:
+                            equipment.health_model.step(1.0)
+
+                if hasattr(equipment, 'seal_model'):
+                    for _ in range(extra_steps):
+                        if random.random() < fractional:
+                            equipment.seal_model.step(1.0)
+
+                if hasattr(equipment, 'bearing_model'):
+                    speed = getattr(equipment, 'speed', 0)
+                    for _ in range(extra_steps):
+                        if random.random() < fractional:
+                            equipment.bearing_model.step(speed)
+
+                if hasattr(equipment, 'impeller_degradation_rate'):
+                    for _ in range(extra_steps):
+                        if random.random() < fractional:
+                            equipment.impeller_health -= equipment.impeller_degradation_rate
 
             # Yield telemetry record
             telemetry_record = {
