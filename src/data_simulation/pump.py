@@ -83,8 +83,8 @@ class CavitationModel:
         speed_factor = speed_ratio ** 2
 
         # Impeller degradation increases NPSH required
-        # At health=1.0: factor=1.0, at health=0.35: factor=2.0
-        impeller_factor = 1.0 + 1.5 * (1.0 - impeller_health) ** 1.5
+        # At health=1.0: factor=1.0, at health=0.40: factor=2.16, at health=0.35: factor=2.31
+        impeller_factor = 1.0 + 2.5 * (1.0 - impeller_health) ** 1.5
 
         return base_npsh * flow_factor * speed_factor * impeller_factor
     
@@ -217,11 +217,12 @@ class PumpBearingModel:
 
             if rpm > 0:
                 base_temp = self.ambient_temp + 20 * speed_factor
-                # Non-linear friction heat: accelerates as bearing degrades
-                # Scaled so temp stays below trip (110°C) until health < failure threshold (0.28)
-                # At health=0.50: ~25°C, at health=0.28: ~44°C, at health=0.15: ~57°C
+                # Non-linear friction heat: depends on degradation AND speed
+                # Speed-dependent: trips at high speed (~rated), doesn't trip at low speed
+                # At speed_factor=1.0, health=0.33: friction=56 -> total ~111°C (trips)
+                # At speed_factor=0.84, health=0.28: friction=52 -> total ~104°C (no trip)
                 degradation = 1.0 - self.health[bearing]
-                friction_heat = 25 * degradation + 50 * degradation ** 2
+                friction_heat = (40 * degradation + 65 * degradation ** 2) * speed_factor
                 load_heat = (load_factor - 1.0) * 15 if load_factor > 1 else 0
                 target_temp = base_temp + friction_heat + load_heat
             else:
@@ -457,7 +458,7 @@ class Pump:
         # Electrical state - properly size motor for pump power
         # Estimate motor kW from pump hydraulics at design point
         design_power = (fluid_density * 9.81 * design_flow * design_head) / (0.78 * 3600)
-        self.motor_rated_power = design_power * 1.25  # 25% margin
+        self.motor_rated_power = design_power * 1.10  # 10% margin
         # Calculate rated current from motor power (480V, 3-phase, 0.85 PF, 0.92 eff)
         self.motor_rated_current = (self.motor_rated_power * 1000) / (math.sqrt(3) * 480 * 0.85 * 0.92)
         self.motor_current = 0.0
@@ -638,12 +639,12 @@ class Pump:
             # Account for motor efficiency (~0.92) and power factor (~0.85)
             base_current = (self.power * 1000) / (math.sqrt(3) * 480 * 0.85 * 0.92)
 
-            # Bearing degradation increases friction → higher current
+            # Bearing degradation increases friction -> higher current
             avg_bearing_health = sum(self.bearing_model.health.values()) / len(self.bearing_model.health)
-            bearing_friction_factor = 1.0 + 0.25 * (1.0 - avg_bearing_health) ** 1.5
+            bearing_friction_factor = 1.0 + 0.50 * (1.0 - avg_bearing_health) ** 1.5
 
-            # Impeller degradation increases hydraulic losses → higher current
-            impeller_loss_factor = 1.0 + 0.20 * (1.0 - self.impeller_health) ** 1.5
+            # Impeller degradation increases hydraulic losses -> higher current
+            impeller_loss_factor = 1.0 + 0.40 * (1.0 - self.impeller_health) ** 1.5
 
             # Combined effect
             self.motor_current = base_current * bearing_friction_factor * impeller_loss_factor
