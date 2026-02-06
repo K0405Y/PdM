@@ -17,6 +17,7 @@ Reference: Industrial SCADA systems, real-world labeling practices
 from typing import Dict, List, Optional
 from enum import Enum
 from datetime import datetime, timedelta
+import json
 import numpy as np
 
 
@@ -147,7 +148,8 @@ class DataOutputFormatter:
 
         # Rolling statistics (simulated - in real pipeline computed from history)
         # Here we'll add placeholders showing what features would be computed
-        formatted['features'] = self._compute_derived_features(record)
+        # Serialize to JSON for database compatibility
+        formatted['features'] = json.dumps(self._compute_derived_features(record))
 
         return formatted
 
