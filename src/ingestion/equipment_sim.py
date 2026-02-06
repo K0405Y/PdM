@@ -94,21 +94,28 @@ def _repair_equipment(equipment, equipment_type: str, failure_code: str):
         if hasattr(equipment.health_model, '_init_generators'):
             equipment.health_model._init_generators()
 
-    # Repair seal model for compressors if seal failed
+    # Repair seal model if seal failed
     if 'seal' in failed_component:
         if hasattr(equipment, 'seal_model') and hasattr(equipment.seal_model, 'health'):
             seal_health = equipment.seal_model.health
-            if 'primary' in failed_component and 'primary' in seal_health:
-                seal_health['primary'] = random.uniform(*repair_health_range)
-                repaired['seal_primary'] = seal_health['primary']
-            elif 'secondary' in failed_component and 'secondary' in seal_health:
-                seal_health['secondary'] = random.uniform(*repair_health_range)
-                repaired['seal_secondary'] = seal_health['secondary']
+            if isinstance(seal_health, dict):
+                # Compressor-style seal model with primary/secondary seals
+                if 'primary' in failed_component and 'primary' in seal_health:
+                    seal_health['primary'] = random.uniform(*repair_health_range)
+                    repaired['seal_primary'] = seal_health['primary']
+                elif 'secondary' in failed_component and 'secondary' in seal_health:
+                    seal_health['secondary'] = random.uniform(*repair_health_range)
+                    repaired['seal_secondary'] = seal_health['secondary']
+                else:
+                    # Repair both seals if generic seal failure
+                    for seal_type in seal_health:
+                        seal_health[seal_type] = random.uniform(*repair_health_range)
+                        repaired[f'seal_{seal_type}'] = seal_health[seal_type]
             else:
-                # Repair both seals if generic seal failure
-                for seal_type in seal_health:
-                    seal_health[seal_type] = random.uniform(*repair_health_range)
-                    repaired[f'seal_{seal_type}'] = seal_health[seal_type]
+                # Pump-style seal model with single health value
+                new_health = random.uniform(*repair_health_range)
+                equipment.seal_model.health = new_health
+                repaired['seal'] = new_health
 
     # Reset equipment to idle state after repair
     equipment.set_speed(0)
