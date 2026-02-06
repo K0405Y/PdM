@@ -1,13 +1,12 @@
 """
-Compressor Data Simulator 
+Compressor Data Simulator
 
 This module simulates an industrial compressor typical of pipeline
-networks, LNG facilities, and refinery process units. Compressors 
-are critical high-speed rotating equipment requiring sophisticated surge 
-protection and condition monitoring.
+networks, LNG facilities, and refinery process units. Compressors
+are critical high-speed rotating equipment requiring condition monitoring.
 
 Key Features:
-- Surge margin monitoring and anti-surge control simulation
+- Surge margin monitoring for operational awareness
 - Dry gas seal health tracking (primary and secondary seals)
 - Shaft orbit and displacement simulation via proximity probes
 - Multi-mode degradation: seal wear, impeller fouling, bearing degradation
@@ -68,9 +67,12 @@ class SurgeModel:
         
         # Surge line coefficients (parabolic approximation)
         # head_surge = a * flow^2 + b * flow + c
+        # With c = 0.48 * design_head, surge flow at design head is ~75% of design flow
+        # Healthy margin ~27%, degraded impeller (0.42) enters alarm (~6%)
+        # Surge trips below impeller failure threshold, preserving health-based priority
         self._a = 0.005
         self._b = -2.0
-        self._c = design_head * 1.2
+        self._c = design_head * 0.48
         
     def calculate_surge_flow(self, head: float) -> float:
         """
@@ -83,10 +85,12 @@ class SurgeModel:
             float: Flow rate at surge point (m³/hr)
         """
         # Solve quadratic: a*Q^2 + b*Q + (c - head) = 0
+        # The larger root gives the surge flow (minimum stable flow at given head)
         discriminant = self._b**2 - 4 * self._a * (self._c - head)
         if discriminant < 0:
             return 0.0
-        return (-self._b - math.sqrt(discriminant)) / (2 * self._a)
+        surge_flow = (-self._b + math.sqrt(discriminant)) / (2 * self._a)
+        return max(surge_flow, 0.0)
     
     def calculate_surge_margin(self, flow: float, head: float,
                                 impeller_health: float = 1.0) -> float:
@@ -338,9 +342,7 @@ class CompressorHealthModel:
         'F_BEARING': 'Bearing Failure - Journal or thrust bearing damage',
         'F_SEAL_PRIMARY': 'Primary Dry Gas Seal Failure',
         'F_SEAL_SECONDARY': 'Secondary Dry Gas Seal Failure',
-        'F_SURGE': 'Surge Event - Violent flow reversal',
         'F_HIGH_VIBRATION': 'High Vibration Trip - Shaft orbit amplitude exceeded safety limits',
-        'F_BEARING_TEMP': 'High Bearing Temperature Trip - Temperature exceeded limit'
     }
     
     def __init__(self, initial_health: dict = None):
@@ -683,10 +685,16 @@ class Compressor:
             
         # Flow is proportional to speed (affinity laws)
         speed_ratio = self.speed / self.LIMITS['speed_rated']
-        self.flow = self.design_flow * speed_ratio
-        
-        # Head is proportional to speed squared (affinity laws)
         impeller_health = health_state.get('impeller', 1.0)
+
+        # Impeller fouling/erosion reduces flow capacity (blocked passages)
+        impeller_deg = 1.0 - impeller_health
+        flow_degradation = 1.0 - 0.3 * impeller_deg ** 1.5
+        # Process flow noise (±1% variation from suction conditions, valve position, etc.)
+        flow_noise = 1.0 + random.gauss(0, 0.01)
+        self.flow = self.design_flow * speed_ratio * flow_degradation * flow_noise
+
+        # Head is proportional to speed squared (affinity laws)
         head_degradation = 0.9 + 0.1 * impeller_health  # Up to 10% head loss
         self.head = self.design_head * (speed_ratio ** 2) * head_degradation
         
@@ -880,12 +888,6 @@ class Compressor:
         # 2. Process-based trips (checked second)
         if orbit_amplitude > self.LIMITS['vibration_trip'] * 2:
             raise Exception("F_HIGH_VIBRATION")
-
-        if max_bearing_temp > self.LIMITS['bearing_temp_max']:
-            raise Exception("F_BEARING_TEMP")
-
-        if self.surge_model.is_surge_trip(surge_margin) and self.speed > 0:
-            raise Exception("F_SURGE")
         
         # 11. Check maintenance required if enabled
         if self.use_maintenance:
