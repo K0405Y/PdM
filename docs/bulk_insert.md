@@ -208,7 +208,7 @@ def insert_failures(
 |-------|-------------|
 | failure_time | Timestamp of failure |
 | operating_hours_at_failure | Cumulative operating hours |
-| failure_mode_code | Failure code (e.g., F_BEARING, F_SURGE) |
+| failure_mode_code | Failure code (e.g., F_BEARING, F_IMPELLER) |
 | speed_rpm_at_failure | Speed at time of failure |
 | Equipment-specific values | EGT, surge margin, vibration, etc. |
 
@@ -293,10 +293,10 @@ failures = [
         'equipment_type': 'compressor',
         'failure_time': datetime(2025, 4, 10, 8, 15, 0),
         'operating_hours_at_failure': 3120.7,
-        'failure_mode_code': 'F_SURGE',
+        'failure_mode_code': 'F_IMPELLER',
         'state': {
             'speed': 11500,
-            'surge_margin': 4.2,
+            'surge_margin': 12.5,
             'vibration_amplitude': 0.08
         }
     }

@@ -66,9 +66,7 @@ def _get_failed_component(failure_code: str) -> str:
 | Failure Code | Component |
 |--------------|-----------|
 | F_HIGH_VIBRATION | bearing |
-| F_BEARING_TEMP | bearing |
 | F_VIB_TRIP | bearing |
-| F_SURGE | impeller |
 | F_HGP | hgp |
 | F_BLADE | blade |
 | F_BEARING | bearing |

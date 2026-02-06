@@ -680,9 +680,7 @@ for i in range(100):
 | F_BEARING | Bearing failure | Health < 0.38 | Health monitoring |
 | F_SEAL_PRIMARY | Primary seal failure | Health < 0.25 | Health monitoring |
 | F_SEAL_SECONDARY | Secondary seal failure | Health < 0.25 | Health monitoring |
-| F_SURGE | Surge event | Margin < 5% | Surge protection |
 | F_HIGH_VIBRATION | Excessive vibration | Orbit > 0.15 mm | Vibration monitoring |
-| F_BEARING_TEMP | Bearing overtemperature | Temp > 110°C | Temperature monitoring |
 
 ### Failure Progression Example
 
