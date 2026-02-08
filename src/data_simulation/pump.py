@@ -217,19 +217,26 @@ class PumpBearingModel:
 
             if rpm > 0:
                 base_temp = self.ambient_temp + 20 * speed_factor
-                # Non-linear friction heat: depends on degradation AND speed
-                # Speed-dependent: trips at high speed (~rated), doesn't trip at low speed
-                # At speed_factor=1.0, health=0.33: friction=56 -> total ~111°C (trips)
-                # At speed_factor=0.84, health=0.28: friction=52 -> total ~104°C (no trip)
                 degradation = 1.0 - self.health[bearing]
-                friction_heat = (40 * degradation + 65 * degradation ** 2) * speed_factor
+                friction_heat = (35 * degradation + 55 * degradation ** 2) * speed_factor
+
+                # Cross-heating: degraded adjacent bearing adds heat via shared housing
+                other = 'non_drive_end' if bearing == 'drive_end' else 'drive_end'
+                other_degradation = 1.0 - self.health[other]
+                cross_heat = 40 * other_degradation * speed_factor
+
                 load_heat = (load_factor - 1.0) * 15 if load_factor > 1 else 0
-                target_temp = base_temp + friction_heat + load_heat
+                target_temp = base_temp + friction_heat + cross_heat + load_heat
             else:
                 target_temp = self.ambient_temp
 
+            # Asymmetric approach: fast heating (friction response), slow cooling (thermal mass)
+            if target_temp > self.current_temps[bearing]:
+                approach_rate = 0.12
+            else:
+                approach_rate = 0.04
             self.current_temps[bearing] = self._approach(
-                self.current_temps[bearing], target_temp, 0.08
+                self.current_temps[bearing], target_temp, approach_rate
             )
 
             result[f'{bearing}_health'] = self.health[bearing]
@@ -456,8 +463,9 @@ class Pump:
         self.power = 0.0
         
         # Electrical state - properly size motor for pump power
-        # Estimate motor kW from pump hydraulics at design point
-        design_power = (fluid_density * 9.81 * design_flow * design_head) / (0.78 * 3600)
+        # Use actual BEP head from hydraulic model (not design_head which is shutoff-based)
+        bep_head = self.hydraulic_model.calculate_head(design_flow, design_speed, 1.0)
+        design_power = (fluid_density * 9.81 * design_flow * bep_head) / (0.78 * 3600)
         self.motor_rated_power = design_power * 1.10  # 10% margin
         # Calculate rated current from motor power (480V, 3-phase, 0.85 PF, 0.92 eff)
         self.motor_rated_current = (self.motor_rated_power * 1000) / (math.sqrt(3) * 480 * 0.85 * 0.92)
@@ -689,7 +697,12 @@ class Pump:
             corrosion_factor = 1.0
         
         # Update speed toward target
-        speed_rate = 0.15 if self.speed_target > self.speed else 0.20
+        # Fast rate when already running (speed changes are near-instant at 15-min intervals)
+        # Slower rate during startup from idle for realistic ramp-up
+        if self.speed < self.design_speed * 0.3:
+            speed_rate = 0.15 if self.speed_target > self.speed else 0.20
+        else:
+            speed_rate = 0.70 if self.speed_target > self.speed else 0.80
         self.speed = self._approach(self.speed, self.speed_target, speed_rate)
         
         # Calculate operating severity (base level)
@@ -805,12 +818,12 @@ class Pump:
         if bearing_state.get('failed_bearing'):
             raise Exception(f"F_BEARING_{bearing_state['failed_bearing'].upper()}")
 
-        # Process-based trips 
+        # Process-based trips (specific conditions checked before general vibration)
+        if max_bearing_temp > self.LIMITS['bearing_temp_max'] and self.speed > self.design_speed * 0.95:
+            raise Exception("F_BEARING_OVERTEMP")
+
         if vib_rms > self.LIMITS['vibration_trip']:
             raise Exception("F_HIGH_VIBRATION")
-
-        if max_bearing_temp > self.LIMITS['bearing_temp_max']:
-            raise Exception("F_BEARING_OVERTEMP")
 
         if self.motor_current > self.motor_rated_current * self.LIMITS['motor_current_max']:
             raise Exception("F_MOTOR_OVERLOAD")
