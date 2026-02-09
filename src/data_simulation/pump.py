@@ -192,13 +192,33 @@ class PumpBearingModel:
             'drive_end': self.ambient_temp,
             'non_drive_end': self.ambient_temp
         }
+
+        # NDE-specific stochastic failure mechanisms
+        # Lubrication starvation (Ornstein-Uhlenbeck process):
+        # NDE is farther from oil supply, so lube effectiveness drifts over time
+        self.nde_lube_effectiveness = 1.0   # 1.0 = fully lubricated, 0.3 = starved
+        self._lube_mean = 0.92              # Long-run mean (slight impairment)
+        self._lube_reversion_rate = 0.002   # Mean-reversion speed per step
+        self._lube_volatility = 0.003       # Noise magnitude per step
+        # Contamination and thrust factors are computed per-step from external inputs
+        self.nde_contamination_factor = 1.0
+        self.nde_thrust_factor = 1.0
         
     def step(self,
              rpm: float,
              load_factor: float = 1.0,
-             lubrication_factor: float = 1.0) -> dict:
+             lubrication_factor: float = 1.0,
+             seal_health: float = 1.0,
+             impeller_health: float = 1.0) -> dict:
         """
         Advance bearing degradation.
+
+        Args:
+            rpm: Shaft speed
+            load_factor: Hydraulic load relative to design
+            lubrication_factor: Global lubrication quality
+            seal_health: Mechanical seal health (0-1), affects NDE contamination
+            impeller_health: Impeller health (0-1), affects NDE axial thrust
 
         Returns:
             dict: Bearing health, temperature values, and failure status
@@ -206,9 +226,34 @@ class PumpBearingModel:
         result = {'failed_bearing': None}
         speed_factor = (rpm / 3000) ** 0.5 if rpm > 0 else 0
 
+        # Update NDE-specific stochastic factors
+        # 1. Lubrication starvation (Ornstein-Uhlenbeck process)
+        if rpm > 0:
+            noise = random.gauss(0, self._lube_volatility)
+            self.nde_lube_effectiveness += (
+                self._lube_reversion_rate * (self._lube_mean - self.nde_lube_effectiveness)
+                + noise
+            )
+            self.nde_lube_effectiveness = max(0.3, min(1.0, self.nde_lube_effectiveness))
+
+        # 2. Contamination from seal leakage (NDE closer to process seal)
+        self.nde_contamination_factor = 1.0 + 1.5 * (1.0 - seal_health) ** 1.3
+
+        # 3. Axial thrust shift from impeller wear (loads NDE more)
+        self.nde_thrust_factor = 1.0 + 1.5 * (1.0 - impeller_health) ** 1.5
+
         for bearing in self.BEARING_TYPES:
             rate = self.degradation_rates[bearing]
-            effective_rate = rate * speed_factor * load_factor * lubrication_factor
+
+            if bearing == 'non_drive_end':
+                # NDE gets per-bearing stochastic multipliers
+                bearing_load = load_factor * self.nde_thrust_factor
+                bearing_lube = lubrication_factor * (2.0 - self.nde_lube_effectiveness)
+                bearing_contam = self.nde_contamination_factor
+                effective_rate = rate * speed_factor * bearing_load * bearing_lube * bearing_contam
+            else:
+                effective_rate = rate * speed_factor * load_factor * lubrication_factor
+
             self.health[bearing] -= effective_rate
 
             # Track which bearing failed (if any)
@@ -226,7 +271,15 @@ class PumpBearingModel:
                 cross_heat = 40 * other_degradation * speed_factor
 
                 load_heat = (load_factor - 1.0) * 15 if load_factor > 1 else 0
-                target_temp = base_temp + friction_heat + cross_heat + load_heat
+
+                if bearing == 'non_drive_end':
+                    # NDE-specific heating from stochastic factors
+                    lube_heat = 15 * (1.0 - self.nde_lube_effectiveness) * speed_factor
+                    contam_heat = 10 * (self.nde_contamination_factor - 1.0) * speed_factor
+                    thrust_heat = 8 * (self.nde_thrust_factor - 1.0) * speed_factor
+                    target_temp = base_temp + friction_heat + cross_heat + load_heat + lube_heat + contam_heat + thrust_heat
+                else:
+                    target_temp = base_temp + friction_heat + cross_heat + load_heat
             else:
                 target_temp = self.ambient_temp
 
@@ -768,7 +821,11 @@ class Pump:
 
         # Update bearings - returns dict with 'failed_bearing' key
         load_factor = self.flow / self.design_flow if self.design_flow > 0 else 1.0
-        bearing_state = self.bearing_model.step(self.speed, load_factor)
+        bearing_state = self.bearing_model.step(
+            self.speed, load_factor,
+            seal_health=seal_state.get('seal_health', 1.0),
+            impeller_health=impeller_health
+        )
 
         # Generate vibration signal
         if self.use_enhanced_vibration:
