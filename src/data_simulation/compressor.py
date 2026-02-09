@@ -64,7 +64,15 @@ class SurgeModel:
         self.design_head = design_head
         self.surge_margin_alarm = surge_margin_alarm
         self.surge_margin_trip = surge_margin_trip
-        
+
+        # Surge event tracking
+        self.surge_active = False
+        self.surge_cycles = 0
+        self.surge_max_cycles = 5       # Cycles before catastrophic failure
+        self.anti_surge_failure_prob = 0.02  # 2% chance protection fails per event
+        self.surge_frequency_hz = 2.0   # Typical surge cycle frequency
+        self.surge_phase = 0.0
+
         # Surge line coefficients (parabolic approximation)
         # head_surge = a * flow^2 + b * flow + c
         # With c = 0.48 * design_head, surge flow at design head is ~75% of design flow
@@ -124,6 +132,59 @@ class SurgeModel:
     def is_surge_trip(self, margin: float) -> bool:
         """Check if surge margin requires trip."""
         return margin < self.surge_margin_trip
+
+    def check_surge_event(self, margin: float, timestep_seconds: float = 1.0) -> dict:
+        """
+        Evaluate whether a surge event initiates or continues.
+        Returns surge state with damage and telemetry modifiers.
+        """
+        result = {
+            'surge_active': False,
+            'surge_cycle_count': 0,
+            'pressure_oscillation': 0.0,
+            'flow_oscillation': 0.0,
+            'axial_vibration_mult': 1.0,
+            'temp_excursion': 0.0,
+            'damage': {},
+            'fatal': False
+        }
+
+        if margin < 0 and not self.surge_active:
+            # Margin has gone negative — does anti-surge catch it?
+            if random.random() < self.anti_surge_failure_prob:
+                # Protection failed — surge initiates
+                self.surge_active = True
+                self.surge_cycles = 0
+                self.surge_phase = 0.0
+            else:
+                # Protection worked — controlled trip, not a failure
+                result['anti_surge_activated'] = True
+                return result
+
+        if self.surge_active:
+            self.surge_phase += 2 * math.pi * self.surge_frequency_hz * timestep_seconds
+            self.surge_cycles += self.surge_frequency_hz * timestep_seconds
+
+            cycle_intensity = min(self.surge_cycles / 3.0, 1.0)  # Builds over first 3 cycles
+
+            result['surge_active'] = True
+            result['surge_cycle_count'] = int(self.surge_cycles)
+            result['pressure_oscillation'] = 0.3 * cycle_intensity * math.sin(self.surge_phase)
+            result['flow_oscillation'] = -0.5 * cycle_intensity * math.sin(self.surge_phase)
+            result['axial_vibration_mult'] = 1.0 + 4.0 * cycle_intensity
+            result['temp_excursion'] = 40 * cycle_intensity
+
+            # Damage per cycle — thrust bearing takes the worst of it
+            result['damage'] = {
+                'bearing': 0.03 * cycle_intensity,    # Thrust loads hammer the bearing
+                'impeller': 0.02 * cycle_intensity,   # Flow reversal stresses blades
+                'seal_primary': 0.01 * cycle_intensity # Pressure reversal stresses seals
+            }
+
+            if self.surge_cycles >= self.surge_max_cycles:
+                result['fatal'] = True  # Catastrophic — raise F_SURGE
+
+        return result
 
 class DryGasSealModel:
     """
@@ -343,6 +404,7 @@ class CompressorHealthModel:
         'F_SEAL_PRIMARY': 'Primary Dry Gas Seal Failure',
         'F_SEAL_SECONDARY': 'Secondary Dry Gas Seal Failure',
         'F_HIGH_VIBRATION': 'High Vibration Trip - Shaft orbit amplitude exceeded safety limits',
+        'F_SURGE': 'Compressor Surge - Anti-surge protection failure, flow reversal damage',
     }
     
     def __init__(self, initial_health: dict = None):
@@ -872,20 +934,45 @@ class Compressor:
             self.flow, self.head, impeller_health
         )
 
+        # Check surge event
+        surge_state = self.surge_model.check_surge_event(surge_margin)
+
+        surge_trip_activated = False
+        if surge_state.get('anti_surge_activated'):
+            # Controlled shutdown — not a failure
+            self.speed_target = 0
+            surge_trip_activated = True
+
+        if surge_state['surge_active']:
+            # Apply telemetry distortions
+            self.discharge_pressure *= (1.0 + surge_state['pressure_oscillation'])
+            self.flow *= (1.0 + surge_state['flow_oscillation'])
+            self.discharge_temp += surge_state['temp_excursion']
+
+            # Apply component damage directly to health model
+            for component, damage in surge_state['damage'].items():
+                if component in self.health_model.health:
+                    self.health_model.health[component] = max(
+                        0.0, self.health_model.health[component] - damage
+                    )
+
         # Calculate max bearing temperature
         max_bearing_temp = max(self.bearing_temp_de, self.bearing_temp_nde, self.thrust_bearing_temp)
 
         # === CHECK ALL FAILURE CONDITIONS ===
-        # Health-based failures checked FIRST to ensure they can occur
 
-        # 1. Check component health failures (health-based)
+        # 1. Surge failure (process event, immediate)
+        if surge_state.get('fatal'):
+            raise Exception("F_SURGE")
+
+        # 2. Check component health failures (health-based)
         if health_state.get('failed_mode'):
             raise Exception(f"F_{health_state['failed_mode'].upper()}")
 
         if seal_state.get('failed_seal'):
             raise Exception(f"F_SEAL_{seal_state['failed_seal'].upper()}")
 
-        # 2. Process-based trips (checked second)
+        # 3. Process-based trips (checked last)
         if orbit_amplitude > self.LIMITS['vibration_trip'] * 2:
             raise Exception("F_HIGH_VIBRATION")
         
@@ -948,7 +1035,12 @@ class Compressor:
             'health_bearing': round(health_state['bearing'], 4),
             'health_seal_primary': round(seal_state['primary_health'], 4),
             'health_seal_secondary': round(seal_state['secondary_health'], 4),
+            'surge_active': surge_state['surge_active'],
+            'surge_cycle_count': surge_state.get('surge_cycle_count', 0),
         }
+
+        if surge_trip_activated:
+            state['surge_trip_activated'] = True
 
         # Add enhanced velocity metrics if available (for ML features)
         if vib_rms is not None:
