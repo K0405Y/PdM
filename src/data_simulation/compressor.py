@@ -69,9 +69,10 @@ class SurgeModel:
         self.surge_active = False
         self.surge_cycles = 0
         self.surge_max_cycles = 5       # Cycles before catastrophic failure
-        self.anti_surge_failure_prob = 0.02  # 2% chance protection fails per event
+        self.anti_surge_failure_prob = 0.01  # 1% chance protection fails per event
         self.surge_frequency_hz = 2.0   # Typical surge cycle frequency
         self.surge_phase = 0.0
+        self._surge_evaluated = False   # One roll per negative-margin episode
 
         # Surge line coefficients (parabolic approximation)
         # head_surge = a * flow^2 + b * flow + c
@@ -149,8 +150,13 @@ class SurgeModel:
             'fatal': False
         }
 
-        if margin < 0 and not self.surge_active:
-            # Margin has gone negative — does anti-surge catch it?
+        # Reset evaluation flag when margin recovers to positive
+        if margin >= 0 and not self.surge_active:
+            self._surge_evaluated = False
+
+        if margin < 0 and not self.surge_active and not self._surge_evaluated:
+            # Margin just crossed negative — one roll per episode
+            self._surge_evaluated = True
             if random.random() < self.anti_surge_failure_prob:
                 # Protection failed — surge initiates
                 self.surge_active = True
