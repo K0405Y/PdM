@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS failure_events.compressor_failures (
     failure_description TEXT,
     speed_rpm_at_failure FLOAT,
     surge_margin_at_failure FLOAT,
+    surge_cycles_at_failure INT,
     vibration_amplitude_at_failure FLOAT,
     notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -68,6 +69,7 @@ INSERT INTO failure_events.failure_modes (equipment_type, mode_code, description
     ('compressor', 'F_SEAL_PRIMARY', 'Primary Dry Gas Seal Failure'),
     ('compressor', 'F_SEAL_SECONDARY', 'Secondary Dry Gas Seal Failure'),
     ('compressor', 'F_HIGH_VIBRATION', 'High Vibration Trip - Shaft orbit amplitude exceeded safety limits'),
+    ('compressor', 'F_SURGE', 'Compressor Surge - Anti-surge protection failure, flow reversal damage'),
     ('pump', 'F_IMPELLER', 'Impeller Degradation - Erosion, corrosion, or damage'),
     ('pump', 'F_SEAL', 'Mechanical Seal Failure - Wear, thermal damage, or contamination'),
     ('pump', 'F_BEARING_DRIVE_END', 'Drive End Bearing Failure - Fatigue, lubrication, or contamination'),

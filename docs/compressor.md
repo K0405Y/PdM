@@ -59,6 +59,28 @@ margin(%) = ((flow_actual - flow_surge) / flow_surge) * 100
 - Trip: 5% margin
 - Surge: < 0% margin (flow reversal)
 
+**Surge Event Modeling**:
+
+When the surge margin goes negative, the anti-surge protection system is evaluated:
+- **Protection works** (default 98% probability): Controlled shutdown (`speed_target = 0`), `surge_trip_activated` flag set in telemetry. Not a failure.
+- **Protection fails** (default 2% probability): Active surge initiates. Flow reversal cycles at `surge_frequency_hz` (default 2.0 Hz) cause escalating damage over `surge_max_cycles` (default 5) cycles before catastrophic failure (`F_SURGE`).
+
+Surge event state tracking:
+- `surge_active`: Whether a surge event is in progress
+- `surge_cycles`: Accumulated surge cycle count
+- `surge_max_cycles`: Cycles before catastrophic failure (default 5)
+- `anti_surge_failure_prob`: Probability protection fails per event (default 0.02)
+- `surge_frequency_hz`: Surge cycle frequency (default 2.0 Hz)
+
+**Telemetry signatures during active surge**:
+- Discharge pressure oscillation: ±30% of current value at surge frequency
+- Flow oscillation/reversal: ±50% of current value at surge frequency
+- Axial vibration spike: up to 5x normal amplitude
+- Discharge temperature excursion: up to +40°C
+- Collateral damage per cycle: bearing (0.03), impeller (0.02), seal_primary (0.01)
+
+Cycle intensity ramps linearly over the first 3 cycles, then caps at 1.0.
+
 **Example Surge Line**:
 
 | Head (kJ/kg) | Surge Flow (m³/hr) | Safe Flow (10% margin) |
@@ -617,25 +639,37 @@ compressor = Compressor(
     design_head=8000
 )
 
-# Gradually reduce flow toward surge
 compressor.set_speed(12000)
 
-for i in range(100):
-    # Simulate valve closure (reduces flow)
-    flow_reduction = i / 100  # 0% to 100%
+try:
+    for i in range(3600):
+        state = compressor.next_state()
 
-    state = compressor.next_state()
+        margin = state['surge_margin']
 
-    margin = state['surge_margin']
-    print(f"Step {i}: Flow={state['flow']:.0f} m³/hr, "
-          f"Surge Margin={margin:.1f}%")
+        if state.get('surge_trip_activated'):
+            print(f"Step {i}: ANTI-SURGE ACTIVATED - Controlled shutdown")
+            break
 
-    if margin < 10:
-        print("  → SURGE ALARM")
-    if margin < 5:
-        print("  → SURGE TRIP - Emergency shutdown")
-        break
+        if state['surge_active']:
+            print(f"Step {i}: SURGE ACTIVE - Cycle {state['surge_cycle_count']}, "
+                  f"Flow={state['flow']:.0f}, Pressure={state['discharge_pressure']:.0f}")
+
+        elif margin < 10:
+            print(f"Step {i}: SURGE ALARM - Margin={margin:.1f}%")
+
+except Exception as e:
+    if str(e) == "F_SURGE":
+        print(f"Step {i}: F_SURGE - Catastrophic surge failure after "
+              f"{state['surge_cycle_count']} cycles")
+    else:
+        print(f"Step {i}: Failure - {e}")
 ```
+
+**Three possible outcomes**:
+1. **Normal recovery**: Margin drops, alarm triggers, conditions change, margin recovers.
+2. **Surge trip (protection works)**: Margin goes negative, anti-surge activates, `speed_target` set to 0, `surge_trip_activated = True` in telemetry. Machine saved.
+3. **Surge failure (protection fails)**: Margin goes negative, anti-surge fails (2% default), violent flow reversal cycles with escalating pressure/flow oscillation and collateral damage. After 5 cycles: `F_SURGE` exception.
 
 ## Telemetry Output
 
@@ -653,6 +687,8 @@ for i in range(100):
 | discharge_temp | float | 50-200 | °C | Outlet temperature |
 | surge_margin | float | -50-100 | % | Margin from surge line |
 | surge_alarm | bool | - | - | Surge alarm active |
+| surge_active | bool | - | - | Surge event in progress |
+| surge_cycle_count | int | 0-5+ | - | Accumulated surge cycles |
 | bearing_temp_de | float | 30-110 | °C | Drive end bearing temp |
 | bearing_temp_nde | float | 30-110 | °C | Non-drive end bearing temp |
 | thrust_bearing_temp | float | 30-110 | °C | Thrust bearing temp |
@@ -681,6 +717,16 @@ for i in range(100):
 | F_SEAL_PRIMARY | Primary seal failure | Health < 0.25 | Health monitoring |
 | F_SEAL_SECONDARY | Secondary seal failure | Health < 0.25 | Health monitoring |
 | F_HIGH_VIBRATION | Excessive vibration | Orbit > 0.15 mm | Vibration monitoring |
+| F_SURGE | Compressor surge | Margin < 0% + anti-surge fails | Surge margin + pressure/flow oscillation |
+
+### Failure Check Ordering
+
+Failure conditions are evaluated in `next_state()` in priority order:
+
+1. **F_SURGE** (process event, immediate) — checked first because surge is a protection system trip
+2. **F_IMPELLER, F_BEARING** (health-based) — component degradation thresholds
+3. **F_SEAL_PRIMARY, F_SEAL_SECONDARY** (health-based) — seal degradation thresholds
+4. **F_HIGH_VIBRATION** (process trip) — orbit amplitude exceeds API 617 limit
 
 ### Failure Progression Example
 
@@ -782,7 +828,7 @@ compressor = Compressor(
 2. **Fixed Gas Properties**: Constant molecular weight and gamma
 3. **Simplified Surge Line**: Real surge lines more complex (speed-dependent)
 4. **No Stall Modeling**: Rotating stall not included
-5. **No Anti-Surge Control**: Valve modulation not simulated
+5. **No Anti-Surge Valve Modulation**: Anti-surge protection is modeled as a binary pass/fail event; continuous valve position control not simulated
 
 ### Potential Enhancements
 
@@ -798,10 +844,12 @@ compressor = Compressor(
    - Speed-dependent surge lines
    - Hysteresis effects
    - Mild vs deep surge
+   - Greitzer B-parameter for system-specific surge frequency
 
-4. **Anti-Surge Control**:
-   - Valve position control
+4. **Anti-Surge Valve Control**:
+   - Continuous valve position modulation
    - Recycle flow calculation
+   - Control system response time modeling
 
 5. **Mechanical Seals**:
    - Alternative to dry gas seals

@@ -80,6 +80,9 @@ CREATE TABLE IF NOT EXISTS telemetry.compressor_telemetry (
     -- Health indicators
     health_impeller FLOAT,
     health_bearing FLOAT,
+    -- Surge event tracking
+    surge_active BOOLEAN,
+    surge_cycle_count INT,
     -- Fault tracking (enable_faults=True)
     num_active_faults INT,
     total_faults_initiated INT,
