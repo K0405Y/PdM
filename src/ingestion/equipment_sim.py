@@ -36,6 +36,7 @@ def _get_failed_component(failure_code: str) -> str:
     failure_to_component = {
         'high_vibration': 'bearing',      # Vibration issues typically mean bearing
         'bearing_temp': 'bearing',        # High bearing temp = bearing issue
+        'bearing_overtemp': 'bearing',    # Bearing overtemperature = bearing issue
         'vib_trip': 'bearing',            # Vibration trip = bearing
         'surge': 'impeller',              # Surge damages impeller
         'hgp': 'hgp',                     # Hot gas path
@@ -48,6 +49,8 @@ def _get_failed_component(failure_code: str) -> str:
         'seal_secondary': 'seal_secondary',
         'bearing_de': 'bearing_de',
         'bearing_nde': 'bearing_nde',
+        'bearing_drive_end': 'bearing_de',          # Pump DE bearing
+        'bearing_non_drive_end': 'bearing_nde',     # Pump NDE bearing
     }
 
     return failure_to_component.get(component, component)
@@ -116,6 +119,22 @@ def _repair_equipment(equipment, equipment_type: str, failure_code: str):
                 new_health = random.uniform(*repair_health_range)
                 equipment.seal_model.health = new_health
                 repaired['seal'] = new_health
+
+    # Repair pump bearing model (pumps use bearing_model, not health_model)
+    if 'bearing' in failed_component:
+        if hasattr(equipment, 'bearing_model') and hasattr(equipment.bearing_model, 'health'):
+            bearing_health = equipment.bearing_model.health
+            if failed_component == 'bearing_de' and 'drive_end' in bearing_health:
+                bearing_health['drive_end'] = random.uniform(*repair_health_range)
+                repaired['bearing_de'] = bearing_health['drive_end']
+            elif failed_component == 'bearing_nde' and 'non_drive_end' in bearing_health:
+                bearing_health['non_drive_end'] = random.uniform(*repair_health_range)
+                repaired['bearing_nde'] = bearing_health['non_drive_end']
+            elif failed_component == 'bearing':
+                # Generic bearing failure (high_vibration, overtemp) - repair both
+                for key in bearing_health:
+                    bearing_health[key] = random.uniform(*repair_health_range)
+                    repaired[key] = bearing_health[key]
 
     # Reset equipment to idle state after repair
     equipment.set_speed(0)
