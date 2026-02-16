@@ -47,10 +47,10 @@ def _get_failed_component(failure_code: str) -> str:
         'seal': 'seal',
         'seal_primary': 'seal_primary',
         'seal_secondary': 'seal_secondary',
-        'bearing_de': 'bearing_de',
-        'bearing_nde': 'bearing_nde',
         'bearing_drive_end': 'bearing_de',          # Pump DE bearing
         'bearing_non_drive_end': 'bearing_nde',     # Pump NDE bearing
+        'motor_overload': 'bearing',                # Motor overload from excessive mechanical friction
+        'cavitation': 'impeller',                   # Cavitation damages impeller
     }
 
     return failure_to_component.get(component, component)
@@ -97,6 +97,12 @@ def _repair_equipment(equipment, equipment_type: str, failure_code: str):
         if hasattr(equipment.health_model, '_init_generators'):
             equipment.health_model._init_generators()
 
+    # Repair standalone impeller_health (pump pattern - not inside health_model)
+    if hasattr(equipment, 'impeller_health') and failed_component == 'impeller':
+        new_health = random.uniform(*repair_health_range)
+        equipment.impeller_health = new_health
+        repaired['impeller'] = new_health
+
     # Repair seal model if seal failed
     if 'seal' in failed_component:
         if hasattr(equipment, 'seal_model') and hasattr(equipment.seal_model, 'health'):
@@ -135,6 +141,13 @@ def _repair_equipment(equipment, equipment_type: str, failure_code: str):
                 for key in bearing_health:
                     bearing_health[key] = random.uniform(*repair_health_range)
                     repaired[key] = bearing_health[key]
+
+    # Reset surge model state after surge failure (prevent re-trigger loop)
+    if hasattr(equipment, 'surge_model') and 'surge' in failure_code.lower():
+        equipment.surge_model.surge_active = False
+        equipment.surge_model.surge_cycles = 0
+        equipment.surge_model.surge_phase = 0.0
+        equipment.surge_model._surge_evaluated = False
 
     # Reset equipment to idle state after repair
     equipment.set_speed(0)
@@ -243,29 +256,33 @@ def simulate_equipment(equipment, equipment_id: int, equipment_type: str,
 
             # Apply additional degradation for increased failure rate
             if degradation_multiplier > 1.0:
-                extra_steps = int(degradation_multiplier) - 1
-                fractional = degradation_multiplier % 1.0
+                full_extra = int(degradation_multiplier - 1.0)
+                fractional_extra = (degradation_multiplier - 1.0) - full_extra
 
                 if hasattr(equipment, 'health_model'):
-                    for _ in range(extra_steps):
-                        if random.random() < fractional:
-                            equipment.health_model.step(1.0)
+                    for _ in range(full_extra):
+                        equipment.health_model.step(1.0)
+                    if fractional_extra > 0 and random.random() < fractional_extra:
+                        equipment.health_model.step(1.0)
 
                 if hasattr(equipment, 'seal_model'):
-                    for _ in range(extra_steps):
-                        if random.random() < fractional:
-                            equipment.seal_model.step(1.0)
+                    for _ in range(full_extra):
+                        equipment.seal_model.step(1.0)
+                    if fractional_extra > 0 and random.random() < fractional_extra:
+                        equipment.seal_model.step(1.0)
 
                 if hasattr(equipment, 'bearing_model'):
                     speed = getattr(equipment, 'speed', 0)
-                    for _ in range(extra_steps):
-                        if random.random() < fractional:
-                            equipment.bearing_model.step(speed)
+                    for _ in range(full_extra):
+                        equipment.bearing_model.step(speed)
+                    if fractional_extra > 0 and random.random() < fractional_extra:
+                        equipment.bearing_model.step(speed)
 
                 if hasattr(equipment, 'impeller_degradation_rate'):
-                    for _ in range(extra_steps):
-                        if random.random() < fractional:
-                            equipment.impeller_health -= equipment.impeller_degradation_rate
+                    for _ in range(full_extra):
+                        equipment.impeller_health -= equipment.impeller_degradation_rate
+                    if fractional_extra > 0 and random.random() < fractional_extra:
+                        equipment.impeller_health -= equipment.impeller_degradation_rate
 
             # Yield telemetry record
             telemetry_record = {
