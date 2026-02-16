@@ -69,7 +69,7 @@ class SurgeModel:
         self.surge_active = False
         self.surge_cycles = 0
         self.surge_max_cycles = 5       # Cycles before catastrophic failure
-        self.anti_surge_failure_prob = 0.01  # 1% chance protection fails per event
+        self.anti_surge_failure_prob = 0.03  # 3% chance protection fails per event
         self.surge_frequency_hz = 2.0   # Typical surge cycle frequency
         self.surge_phase = 0.0
         self._surge_evaluated = False   # One roll per negative-margin episode
@@ -120,8 +120,10 @@ class SurgeModel:
 
         # Impeller degradation shifts surge line to higher flows
         # Fouled/damaged impeller has altered flow characteristics
-        # At health=1.0: shift=0%, at health=0.42: shift=15%
-        surge_shift_factor = 1.0 + 0.25 * (1.0 - impeller_health) ** 1.2
+        # At health=1.0: shift=0%, at health=0.55: margin crosses zero at rated speed
+        # Wider shift ensures surge margin goes negative before impeller
+        # health threshold (0.42), giving anti-surge protection a window to fail
+        surge_shift_factor = 1.0 + 0.55 * (1.0 - impeller_health) ** 1.2
         effective_surge_flow = surge_flow * surge_shift_factor
 
         return ((flow - effective_surge_flow) / effective_surge_flow) * 100.0
@@ -326,13 +328,15 @@ class ShaftOrbitModel:
         bearing_deg = 1.0 - bearing_health
 
         # Unbalance increases orbit size (impeller fouling/erosion)
-        # Scaled so vibration trip occurs BELOW health failure threshold (0.42)
-        # even when both components degrade simultaneously
-        unbalance_factor = 1.0 + 0.8 * impeller_deg + 1.2 * impeller_deg ** 2
+        # Scaled so combined vibration from simultaneous impeller+bearing
+        # degradation stays below trip (0.15 mm p-p) until health thresholds
+        # are reached (impeller 0.42, bearing 0.38)
+        unbalance_factor = 1.0 + 0.5 * impeller_deg + 0.8 * impeller_deg ** 2
 
         # Bearing wear increases orbit size with accelerating growth
-        # Scaled so vibration trip occurs BELOW health failure threshold (0.38)
-        wear_factor = 1.0 + 1.0 * bearing_deg + 1.5 * bearing_deg ** 2
+        # Reduced coefficients ensure F_BEARING can trigger before
+        # F_HIGH_VIBRATION when both components degrade simultaneously
+        wear_factor = 1.0 + 0.6 * bearing_deg + 1.0 * bearing_deg ** 2
 
         orbit_radius = base_radius * unbalance_factor * wear_factor
         
