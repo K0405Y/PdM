@@ -49,7 +49,6 @@ def _get_failed_component(failure_code: str) -> str:
         'seal_secondary': 'seal_secondary',
         'bearing_drive_end': 'bearing_de',          # Pump DE bearing
         'bearing_non_drive_end': 'bearing_nde',     # Pump NDE bearing
-        'motor_overload': 'bearing',                # Motor overload from excessive mechanical friction
         'cavitation': 'impeller',                   # Cavitation damages impeller
     }
 
@@ -127,7 +126,7 @@ def _repair_equipment(equipment, equipment_type: str, failure_code: str):
                 repaired['seal'] = new_health
 
     # Repair pump bearing model (pumps use bearing_model, not health_model)
-    if 'bearing' in failed_component:
+    if failed_component in ('bearing', 'bearing_de', 'bearing_nde'):
         if hasattr(equipment, 'bearing_model') and hasattr(equipment.bearing_model, 'health'):
             bearing_health = equipment.bearing_model.health
             if failed_component == 'bearing_de' and 'drive_end' in bearing_health:
@@ -141,6 +140,27 @@ def _repair_equipment(equipment, equipment_type: str, failure_code: str):
                 for key in bearing_health:
                     bearing_health[key] = random.uniform(*repair_health_range)
                     repaired[key] = bearing_health[key]
+
+    # Motor overload - repair the most degraded contributing component
+    # (motor overload is caused by both bearing friction and impeller loss)
+    if failed_component == 'motor_overload':
+        worst_comp = None
+        worst_health = 1.0
+        if hasattr(equipment, 'impeller_health'):
+            if equipment.impeller_health < worst_health:
+                worst_comp = 'impeller'
+                worst_health = equipment.impeller_health
+        if hasattr(equipment, 'bearing_model') and hasattr(equipment.bearing_model, 'health'):
+            for bearing, health in equipment.bearing_model.health.items():
+                if health < worst_health:
+                    worst_comp = bearing
+                    worst_health = health
+        if worst_comp == 'impeller' and hasattr(equipment, 'impeller_health'):
+            equipment.impeller_health = random.uniform(*repair_health_range)
+            repaired['impeller'] = equipment.impeller_health
+        elif worst_comp and hasattr(equipment, 'bearing_model'):
+            equipment.bearing_model.health[worst_comp] = random.uniform(*repair_health_range)
+            repaired[worst_comp] = equipment.bearing_model.health[worst_comp]
 
     # Reset surge model state after surge failure (prevent re-trigger loop)
     if hasattr(equipment, 'surge_model') and 'surge' in failure_code.lower():
@@ -190,9 +210,10 @@ def simulate_equipment(equipment, equipment_id: int, equipment_type: str,
     # Duty cycle: 90% running, 10% idle
     duty_cycle = [random.random() < 0.9 for _ in range(num_samples)]
 
-    # Track maintenance periods
+    # Track maintenance periods and alarm state
     in_maintenance = False
     maintenance_remaining = 0
+    current_alarm = None  # Tracks which alarm is active (None = no alarm)
     state = {}
 
     for i in range(num_samples):
@@ -294,6 +315,45 @@ def simulate_equipment(equipment, equipment_id: int, equipment_type: str,
             }
             if include_equipment_type:
                 telemetry_record['equipment_type'] = equipment_type
+
+            # Check for bearing/motor process alarms (non-fatal flags from pump model)
+            # These fire as state flags, not exceptions, so components keep degrading.
+            # On each new alarm onset (or alarm type change), probabilistically shutdown.
+            bearing_alarm = state.get('bearing_alarm') if state else None
+            if bearing_alarm:
+                telemetry_record['alarm'] = bearing_alarm
+                if bearing_alarm != current_alarm:
+                    # New alarm or alarm type changed — decide whether to shutdown
+                    current_alarm = bearing_alarm
+                    if random.random() < 0.12:
+                        yield telemetry_record
+                        yield {
+                            'type': 'failure',
+                            'equipment_id': equipment_id,
+                            'equipment_type': equipment_type,
+                            'failure_time': sample_time,
+                            'operating_hours_at_failure': equipment.operating_hours,
+                            'failure_mode_code': bearing_alarm,
+                            'state': state
+                        }
+                        repaired_components = _repair_equipment(
+                            equipment, equipment_type, bearing_alarm
+                        )
+                        yield {
+                            'type': 'maintenance_start',
+                            'equipment_id': equipment_id,
+                            'equipment_type': equipment_type,
+                            'start_time': sample_time,
+                            'failure_code': bearing_alarm,
+                            'repaired_components': repaired_components,
+                            'downtime_hours': maintenance_downtime_hours
+                        }
+                        in_maintenance = True
+                        current_alarm = None
+                        maintenance_remaining = maintenance_samples
+                        continue
+            else:
+                current_alarm = None
 
             yield telemetry_record
 
