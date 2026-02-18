@@ -827,7 +827,13 @@ class Pump:
             impeller_health=impeller_health
         )
 
-        # Generate vibration signal
+        # Always compute bearing-model vibration for trip check
+        # (calibrated so RMS stays below 7.0 mm/s until bearing health < 0.28)
+        vib_signal_bearing = self.bearing_model.generate_vibration(self.speed)
+        vib_rms_bearing = np.sqrt(np.mean(vib_signal_bearing**2))
+        vib_peak_bearing = np.max(np.abs(vib_signal_bearing))
+
+        # Generate enhanced vibration for telemetry/ML features if available
         if self.use_enhanced_vibration:
             try:
                 vib_metrics = self.vibration_generator.generate(
@@ -839,14 +845,12 @@ class Pump:
                 vib_peak = vib_metrics.get('peak', 0.0)
                 vib_enhanced = vib_metrics
             except Exception as e:
-                vib_signal = self.bearing_model.generate_vibration(self.speed)
-                vib_rms = np.sqrt(np.mean(vib_signal**2))
-                vib_peak = np.max(np.abs(vib_signal))
+                vib_rms = vib_rms_bearing
+                vib_peak = vib_peak_bearing
                 vib_enhanced = None
         else:
-            vib_signal = self.bearing_model.generate_vibration(self.speed)
-            vib_rms = np.sqrt(np.mean(vib_signal**2))
-            vib_peak = np.max(np.abs(vib_signal))
+            vib_rms = vib_rms_bearing
+            vib_peak = vib_peak_bearing
             vib_enhanced = None
 
         # Calculate cavitation parameters
@@ -875,15 +879,22 @@ class Pump:
         if bearing_state.get('failed_bearing'):
             raise Exception(f"F_BEARING_{bearing_state['failed_bearing'].upper()}")
 
-        # Process-based trips (specific conditions checked before general vibration)
-        if max_bearing_temp > self.LIMITS['bearing_temp_max'] and self.speed > self.design_speed * 0.95:
-            raise Exception("F_BEARING_OVERTEMP")
+        # Process-based alarms (non-fatal — flagged for simulation layer to handle)
+        # These are precursor warnings; bearings must keep degrading toward health failure
+        bearing_alarm = None
+        overtemp_active = max_bearing_temp > self.LIMITS['bearing_temp_max'] and self.speed > self.design_speed * 0.95
+        vib_alarm_active = vib_rms_bearing > self.LIMITS['vibration_alarm']
+        if overtemp_active and vib_alarm_active:
+            bearing_alarm = random.choice(['F_BEARING_OVERTEMP', 'F_HIGH_VIBRATION'])
+        elif overtemp_active:
+            bearing_alarm = 'F_BEARING_OVERTEMP'
+        elif vib_alarm_active:
+            bearing_alarm = 'F_HIGH_VIBRATION'
 
-        if vib_rms > self.LIMITS['vibration_trip']:
-            raise Exception("F_HIGH_VIBRATION")
-
-        if self.motor_current > self.motor_rated_current * self.LIMITS['motor_current_max']:
-            raise Exception("F_MOTOR_OVERLOAD")
+        # Motor overload — also non-fatal alarm (caused by bearing friction + impeller loss)
+        motor_overload_active = self.motor_current > self.motor_rated_current * self.LIMITS['motor_current_max']
+        if motor_overload_active:
+            bearing_alarm = 'F_MOTOR_OVERLOAD'
 
         if self.cavitation_model.is_trip_condition(npsh_margin) and self.speed > 0:
             raise Exception("F_CAVITATION")
@@ -955,6 +966,7 @@ class Pump:
             'health_seal': round(seal_state['seal_health'], 4),
             'health_bearing_de': round(bearing_state['drive_end_health'], 4),
             'health_bearing_nde': round(bearing_state['non_drive_end_health'], 4),
+            'bearing_alarm': bearing_alarm,
         }
         
         #Apply output formatting if enabled
