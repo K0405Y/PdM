@@ -10,6 +10,7 @@ Fast database insertion using PostgreSQL COPY command:
 import csv
 import json
 import logging
+from datetime import timedelta
 from io import StringIO
 from typing import List, Dict, Set
 from sqlalchemy import text
@@ -317,3 +318,71 @@ def insert_failures(db, failures: List[Dict]) -> int:
         session.close()
 
     return len(failures)
+
+
+def insert_maintenance(db, maintenance_records: List[Dict]) -> int:
+    """Insert maintenance event records with computed end_time."""
+    if not maintenance_records:
+        return 0
+
+    def _clean(val):
+        if hasattr(val, 'item'):
+            return val.item()
+        return val
+
+    logger.info(f"Inserting {len(maintenance_records)} maintenance events")
+
+    maintenance_config = {
+        'turbine': {
+            'table': 'maintenance_events.gas_turbine_maintenance',
+            'id_col': 'turbine_id',
+        },
+        'compressor': {
+            'table': 'maintenance_events.compressor_maintenance',
+            'id_col': 'compressor_id',
+        },
+        'pump': {
+            'table': 'maintenance_events.pump_maintenance',
+            'id_col': 'pump_id',
+        }
+    }
+
+    columns = ['start_time', 'end_time', 'failure_code', 'downtime_hours', 'repaired_components']
+
+    session = db.get_session()
+    try:
+        for record in maintenance_records:
+            eq_type = record['equipment_type']
+            config = maintenance_config[eq_type]
+
+            all_cols = [config['id_col']] + columns
+            placeholders = ', '.join([f':val{i}' for i in range(len(all_cols))])
+            sql = f"INSERT INTO {config['table']} ({', '.join(all_cols)}) VALUES ({placeholders})"
+
+            start_time = record['start_time']
+            downtime_hours = _clean(record['downtime_hours'])
+            end_time = start_time + timedelta(hours=downtime_hours)
+
+            repaired = record.get('repaired_components', {})
+            repaired_json = json.dumps({k: round(float(v), 4) for k, v in repaired.items()})
+
+            values = {
+                'val0': _clean(record['equipment_id']),
+                'val1': start_time,
+                'val2': end_time,
+                'val3': record['failure_code'],
+                'val4': downtime_hours,
+                'val5': repaired_json,
+            }
+
+            session.execute(text(sql), values)
+
+        session.commit()
+        logger.info(f"Inserted {len(maintenance_records)} maintenance records")
+    except Exception as e:
+        logger.error(f"Maintenance insert error: {e}")
+        raise
+    finally:
+        session.close()
+
+    return len(maintenance_records)
