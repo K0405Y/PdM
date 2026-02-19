@@ -48,7 +48,7 @@ The data pipeline executes six sequential steps:
 | 2 | Create database schemas | SQL scripts in `db schemas/` |
 | 3 | Seed master data (equipment definitions) | `db_setup.MasterData` |
 | 4 | Run equipment simulations | `equipment_sim` |
-| 5 | Bulk insert telemetry and failures | `bulk_insert` |
+| 5 | Bulk insert telemetry, failures, and maintenance events | `bulk_insert` |
 | 6 | Verify data integrity | SQL queries |
 
 ## Module Components
@@ -89,7 +89,7 @@ pipeline.create_schemas(schemas_dir=None)  # Uses default db schemas/ directory
 **Behavior**:
 - Executes `.sql` files in alphabetical order
 - Skips files containing 'verification' in filename
-- Creates schemas: `master_data`, `telemetry`, `failure_events`
+- Creates schemas: `master_data`, `telemetry`, `failure_events`, `maintenance_events`
 
 #### seed_master_data()
 
@@ -122,7 +122,7 @@ turbine_tel, compressor_tel, pump_tel, failures = pipeline.simulate_equipment(
 
 #### ingest_data()
 
-Bulk inserts generated data into PostgreSQL.
+Bulk inserts telemetry and failure data into PostgreSQL.
 
 ```python
 pipeline.ingest_data(
@@ -134,6 +134,17 @@ pipeline.ingest_data(
 ```
 
 Uses PostgreSQL `COPY` command for 100x faster insertion than row-by-row `INSERT`.
+
+**Note**: `ingest_data()` currently inserts telemetry and failures only. Maintenance events can be inserted separately using `insert_maintenance()` from `bulk_insert`:
+
+```python
+from src.ingestion.bulk_insert import insert_maintenance
+
+# Extract maintenance_start records from telemetry lists
+maintenance = [r for r in turbine_tel + compressor_tel + pump_tel
+               if r.get('type') == 'maintenance_start']
+insert_maintenance(pipeline.db, maintenance)
+```
 
 #### verify_data()
 
@@ -326,7 +337,7 @@ Formula: `records = equipment_count * duration_days * 24 * 60 / sample_interval_
 
 ## Database Schema
 
-The pipeline creates three schemas:
+The pipeline creates four schemas:
 
 ### master_data Schema
 
@@ -336,15 +347,23 @@ The pipeline creates three schemas:
 
 ### telemetry Schema
 
-- `gas_turbine_telemetry`: Turbine sensor readings
-- `compressor_telemetry`: Compressor sensor readings
-- `pump_telemetry`: Pump sensor readings
+- `gas_turbine_telemetry`: Turbine sensor readings (31 columns + derived features)
+- `compressor_telemetry`: Compressor sensor readings (34 columns + derived features)
+- `pump_telemetry`: Pump sensor readings (32 columns + derived features)
 
 ### failure_events Schema
 
 - `gas_turbine_failures`: Turbine failure records
 - `compressor_failures`: Compressor failure records
 - `pump_failures`: Pump failure records
+
+### maintenance_events Schema
+
+- `gas_turbine_maintenance`: Turbine maintenance event logs
+- `compressor_maintenance`: Compressor maintenance event logs
+- `pump_maintenance`: Pump maintenance event logs
+
+Each maintenance table stores `start_time`, `end_time`, `failure_code`, `downtime_hours`, and `repaired_components` (JSONB).
 
 ## Error Handling
 
@@ -400,7 +419,7 @@ from src.ingestion.db_setup import Database, MasterData
 from src.ingestion.equipment_sim import simulate_parallel, simulate_sequential
 
 # Bulk data insertion
-from src.ingestion.bulk_insert import bulk_insert_telemetry, insert_failures
+from src.ingestion.bulk_insert import bulk_insert_telemetry, insert_failures, insert_maintenance
 
 # Equipment simulators
 from src.data_simulation.gas_turbine import GasTurbine

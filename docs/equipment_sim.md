@@ -67,14 +67,20 @@ def _get_failed_component(failure_code: str) -> str:
 |--------------|-----------|
 | F_HIGH_VIBRATION | bearing |
 | F_VIB_TRIP | bearing |
+| F_BEARING_TEMP | bearing |
+| F_BEARING_OVERTEMP | bearing |
 | F_HGP | hgp |
 | F_BLADE | blade |
 | F_BEARING | bearing |
 | F_FUEL | fuel |
 | F_IMPELLER | impeller |
+| F_SURGE | impeller |
+| F_CAVITATION | impeller |
 | F_SEAL | seal |
 | F_SEAL_PRIMARY | seal_primary |
 | F_SEAL_SECONDARY | seal_secondary |
+| F_BEARING_DRIVE_END | bearing_de |
+| F_BEARING_NON_DRIVE_END | bearing_nde |
 
 #### _repair_equipment()
 
@@ -237,6 +243,26 @@ Generated when maintenance period ends and equipment resumes operation.
                               ▼
                         (loop continues)
 ```
+
+## Bearing Alarm Logic
+
+In addition to exception-based failures (where equipment raises an exception when health drops below a threshold), the simulation handles **non-fatal bearing/motor alarms**. These are state flags set by the pump model that do not immediately stop the equipment:
+
+- Alarms appear as `state['bearing_alarm']` values (e.g., `F_BEARING_TEMP`, `F_HIGH_VIBRATION`)
+- Equipment continues degrading past the alarm threshold
+- On each **new alarm onset** (alarm appears for the first time, or alarm type changes), there is a **12% probability** of operator-initiated shutdown
+- If shutdown occurs, the same failure → repair → maintenance cycle is triggered as with exception-based failures
+- If shutdown does not occur, the alarm is tracked and the equipment continues operating
+
+This models real-world behavior where operators may or may not respond to alarms depending on severity, workload, and operational priorities.
+
+## Worker Function Note
+
+`_worker_simulate()` separates records from `simulate_equipment()` into two lists:
+- **failures list**: Only records with `type == 'failure'`
+- **telemetry list**: Everything else — including `maintenance_start` and `maintenance_complete` records
+
+This means the telemetry list returned by `simulate_parallel()` and `simulate_sequential()` contains mixed record types. Consumers must filter by `record['type']` to extract maintenance events.
 
 ## Usage Examples
 

@@ -17,9 +17,10 @@ Predictive maintenance simulations generate millions of telemetry records. Tradi
 
 - **100x Performance**: `COPY` command vs individual `INSERT` statements
 - **Column Mapping**: Maps simulation state keys to database column names
-- **Default Values**: Automatic handling of missing data
+- **Derived Feature Extraction**: Parses JSON `features` field for ML-ready columns
 - **NumPy Conversion**: Converts NumPy scalar types to Python native types
 - **Failure Records**: Separate insertion path for failure events
+- **Maintenance Records**: Insertion path for maintenance events with computed end times
 
 ## Performance Comparison
 
@@ -35,7 +36,7 @@ Predictive maintenance simulations generate millions of telemetry records. Tradi
 
 Each equipment type has a mapping from simulation state keys to database column names.
 
-#### Turbine Columns
+#### Turbine Columns (31 fields)
 
 ```python
 TURBINE_COLUMNS = {
@@ -43,22 +44,38 @@ TURBINE_COLUMNS = {
     'sample_time': 'sample_time',
     'operating_hours': 'operating_hours',
     'speed': 'speed_rpm',
+    'speed_target': 'speed_target_rpm',
     'exhaust_gas_temp': 'egt_celsius',
     'oil_temp': 'oil_temp_celsius',
     'fuel_flow': 'fuel_flow_kg_s',
     'compressor_discharge_temp': 'compressor_discharge_temp_celsius',
     'compressor_discharge_pressure': 'compressor_discharge_pressure_kpa',
+    'efficiency': 'efficiency_fraction',
+    'ambient_temp': 'ambient_temp_celsius',
+    'ambient_pressure': 'ambient_pressure_kpa',
     'vibration_rms': 'vibration_rms_mm_s',
     'vibration_peak': 'vibration_peak_mm_s',
-    'efficiency': 'efficiency_fraction',
+    'vibration_crest_factor': 'vibration_crest_factor',
+    'vibration_kurtosis': 'vibration_kurtosis',
     'health_hgp': 'health_hgp',
     'health_blade': 'health_blade',
     'health_bearing': 'health_bearing',
     'health_fuel': 'health_fuel',
+    'num_active_faults': 'num_active_faults',
+    'total_faults_initiated': 'total_faults_initiated',
+    'upset_active': 'upset_active',
+    'upset_type': 'upset_type',
+    'upset_severity': 'upset_severity',
+    # Derived features (extracted from JSON 'features' field)
+    'vibration_trend_7d': 'vibration_trend_7d',
+    'temp_variation_24h': 'temp_variation_24h',
+    'speed_stability': 'speed_stability',
+    'efficiency_degradation_rate': 'efficiency_degradation_rate',
+    'load_factor': 'load_factor',
 }
 ```
 
-#### Compressor Columns
+#### Compressor Columns (34 fields)
 
 ```python
 COMPRESSOR_COLUMNS = {
@@ -66,26 +83,46 @@ COMPRESSOR_COLUMNS = {
     'sample_time': 'sample_time',
     'operating_hours': 'operating_hours',
     'speed': 'speed_rpm',
+    'speed_target': 'speed_target_rpm',
     'flow': 'flow_m3h',
     'head': 'head_kj_kg',
+    'efficiency': 'efficiency_fraction',
+    'power': 'power_kw',
+    'suction_pressure': 'suction_pressure_kpa',
+    'suction_temp': 'suction_temp_celsius',
     'discharge_pressure': 'discharge_pressure_kpa',
     'discharge_temp': 'discharge_temp_celsius',
     'surge_margin': 'surge_margin_percent',
-    'vibration_amplitude': 'vibration_amplitude_mm',
-    'average_gap': 'average_gap_mm',
+    'surge_alarm': 'surge_alarm',
+    'orbit_amplitude': 'vibration_amplitude_mm',
     'sync_amplitude': 'sync_amplitude_mm',
+    'shaft_x_displacement': 'shaft_x_displacement_mm',
+    'shaft_y_displacement': 'shaft_y_displacement_mm',
     'bearing_temp_de': 'bearing_temp_de_celsius',
     'bearing_temp_nde': 'bearing_temp_nde_celsius',
     'thrust_bearing_temp': 'thrust_bearing_temp_celsius',
-    'seal_health_primary': 'seal_health_primary',
-    'seal_health_secondary': 'seal_health_secondary',
-    'seal_leakage': 'seal_leakage_rate',
+    'health_seal_primary': 'seal_health_primary',
+    'health_seal_secondary': 'seal_health_secondary',
+    'primary_seal_leakage': 'primary_seal_leakage_kg_s',
+    'secondary_seal_leakage': 'secondary_seal_leakage_kg_s',
     'health_impeller': 'health_impeller',
     'health_bearing': 'health_bearing',
+    'num_active_faults': 'num_active_faults',
+    'total_faults_initiated': 'total_faults_initiated',
+    'upset_active': 'upset_active',
+    'upset_type': 'upset_type',
+    'upset_severity': 'upset_severity',
+    # Derived features (extracted from JSON 'features' field)
+    'vibration_trend_7d': 'vibration_trend_7d',
+    'temp_variation_24h': 'temp_variation_24h',
+    'speed_stability': 'speed_stability',
+    'efficiency_degradation_rate': 'efficiency_degradation_rate',
+    'pressure_ratio': 'pressure_ratio',
+    'load_factor': 'load_factor',
 }
 ```
 
-#### Pump Columns
+#### Pump Columns (32 fields)
 
 ```python
 PUMP_COLUMNS = {
@@ -93,6 +130,7 @@ PUMP_COLUMNS = {
     'sample_time': 'sample_time',
     'operating_hours': 'operating_hours',
     'speed': 'speed_rpm',
+    'speed_target': 'speed_target_rpm',
     'flow': 'flow_m3h',
     'head': 'head_m',
     'efficiency': 'efficiency_fraction',
@@ -102,52 +140,50 @@ PUMP_COLUMNS = {
     'fluid_temp': 'fluid_temp_celsius',
     'npsh_available': 'npsh_available_m',
     'npsh_required': 'npsh_required_m',
-    'cavitation_margin': 'cavitation_margin_m',
+    'npsh_margin': 'cavitation_margin_m',
     'cavitation_severity': 'cavitation_severity',
-    'vibration': 'vibration_mm_s',
+    'vibration_rms': 'vibration_rms_mm_s',
+    'vibration_peak': 'vibration_peak_mm_s',
     'bearing_temp_de': 'bearing_temp_de_celsius',
     'bearing_temp_nde': 'bearing_temp_nde_celsius',
     'motor_current': 'motor_current_amps',
-    'seal_health': 'seal_health',
+    'motor_current_ratio': 'motor_current_ratio',
     'seal_leakage': 'seal_leakage_rate',
+    'bep_deviation': 'bep_deviation_percent',
     'health_impeller': 'health_impeller',
     'health_seal': 'health_seal',
     'health_bearing_de': 'health_bearing_de',
     'health_bearing_nde': 'health_bearing_nde',
+    # Derived features (extracted from JSON 'features' field)
+    'temp_variation_24h': 'temp_variation_24h',
+    'vibration_trend_7d': 'vibration_trend_7d',
+    'speed_stability': 'speed_stability',
+    'efficiency_degradation_rate': 'efficiency_degradation_rate',
+    'pressure_ratio': 'pressure_ratio',
+    'load_factor': 'load_factor',
 }
 ```
 
-### Default Values
+### Derived Feature Keys
 
-Missing data is handled with sensible defaults:
+Six derived features are extracted from the JSON `features` field nested inside each record's `state` dict, rather than from top-level state keys:
 
 ```python
-TURBINE_DEFAULTS = {
-    'speed_rpm': 0, 'egt_celsius': 0, 'oil_temp_celsius': 0, 'fuel_flow_kg_s': 0,
-    'compressor_discharge_temp_celsius': 0, 'compressor_discharge_pressure_kpa': 0,
-    'vibration_rms_mm_s': 0, 'vibration_peak_mm_s': 0, 'efficiency_fraction': 1.0,
-    'health_hgp': 0, 'health_blade': 0, 'health_bearing': 0, 'health_fuel': 0,
-}
-
-COMPRESSOR_DEFAULTS = {
-    'speed_rpm': 0, 'flow_m3h': 0, 'head_kj_kg': 0, 'discharge_pressure_kpa': 0,
-    'discharge_temp_celsius': 0, 'surge_margin_percent': 0, 'vibration_amplitude_mm': 0,
-    'average_gap_mm': 0, 'sync_amplitude_mm': 0, 'bearing_temp_de_celsius': 45,
-    'bearing_temp_nde_celsius': 45, 'thrust_bearing_temp_celsius': 50,
-    'seal_health_primary': 0, 'seal_health_secondary': 0, 'seal_leakage_rate': 0,
-    'health_impeller': 0, 'health_bearing': 0,
-}
-
-PUMP_DEFAULTS = {
-    'speed_rpm': 0, 'flow_m3h': 0, 'head_m': 0, 'efficiency_fraction': 0, 'power_kw': 0,
-    'suction_pressure_kpa': 200, 'discharge_pressure_kpa': 200, 'fluid_temp_celsius': 40,
-    'npsh_available_m': 8, 'npsh_required_m': 3, 'cavitation_margin_m': 5,
-    'cavitation_severity': 0, 'vibration_mm_s': 0, 'bearing_temp_de_celsius': 50,
-    'bearing_temp_nde_celsius': 50, 'motor_current_amps': 0, 'seal_health': 0,
-    'seal_leakage_rate': 0, 'health_impeller': 0, 'health_seal': 0,
-    'health_bearing_de': 0, 'health_bearing_nde': 0,
+DERIVED_FEATURE_KEYS = {
+    'vibration_trend_7d',
+    'temp_variation_24h',
+    'speed_stability',
+    'efficiency_degradation_rate',
+    'pressure_ratio',
+    'load_factor',
 }
 ```
+
+Not all equipment types produce all derived features. For example, turbines do not produce `pressure_ratio`. Missing derived features are inserted as NULL.
+
+### NULL Handling
+
+Missing values are inserted as PostgreSQL NULL. The module does not use default value substitution — any key absent from the record's state or features dict results in `\N` in the CSV stream, which PostgreSQL interprets as NULL.
 
 ### Core Functions
 
@@ -214,19 +250,61 @@ def insert_failures(
 
 #### _get_value()
 
-Internal helper to extract values from nested record structure.
+Internal helper to extract values from record structure.
 
 ```python
 def _get_value(record: Dict, key: str, defaults: Dict) -> str
 ```
 
-**Handles**:
-- Top-level keys: `equipment_id`, `sample_time`, `operating_hours`
-- Nested state keys: `state['speed']`, `state['exhaust_gas_temp']`
-- Health keys: `state['health']['hgp']` → `health_hgp`
-- NumPy scalar conversion
-- Float rounding (2 decimal places)
-- NULL marker for missing values
+**Value resolution order**:
+1. **Record-level keys** (`_RECORD_KEYS`): `equipment_id`, `sample_time`, `operating_hours` — read directly from the record dict
+2. **Derived feature keys** (`DERIVED_FEATURE_KEYS`): Extracted from `state['features']` JSON field, parsed if string
+3. **All other keys**: Read flat from `state` dict (e.g., `state['speed']`, `state['health_hgp']`)
+
+**Post-processing**:
+- NumPy scalar conversion (`np.integer`, `np.floating` → `float`)
+- Float rounding to 4 decimal places
+- Returns `\N` (PostgreSQL NULL marker) for missing values
+
+#### insert_maintenance()
+
+Inserts maintenance event records using parameterized SQL.
+
+```python
+def insert_maintenance(
+    db,                              # Database connection object
+    maintenance_records: List[Dict]  # List of maintenance records
+) -> int                             # Number of records inserted
+```
+
+**Maintenance Tables**:
+- `maintenance_events.gas_turbine_maintenance`
+- `maintenance_events.compressor_maintenance`
+- `maintenance_events.pump_maintenance`
+
+**Columns Inserted**:
+
+| Column | Source | Description |
+|--------|--------|-------------|
+| `{equipment}_id` | `record['equipment_id']` | Equipment foreign key |
+| `start_time` | `record['start_time']` | Maintenance start timestamp |
+| `end_time` | Computed: `start_time + timedelta(hours=downtime_hours)` | Maintenance end timestamp |
+| `failure_code` | `record['failure_code']` | Triggering failure mode code |
+| `downtime_hours` | `record['downtime_hours']` | Maintenance duration in hours |
+| `repaired_components` | `record['repaired_components']` | JSONB dict of component → new health value |
+
+**Input Record Format** (from `equipment_sim.simulate_equipment()` `maintenance_start` records):
+
+```python
+{
+    'equipment_type': 'turbine',
+    'equipment_id': 1,
+    'start_time': datetime(2025, 3, 20, 14, 22, 0),
+    'failure_code': 'F_BEARING',
+    'repaired_components': {'bearing': 0.89},
+    'downtime_hours': 24.0
+}
+```
 
 ## Usage Examples
 
@@ -240,7 +318,7 @@ from src.ingestion.db_setup import Database
 db = Database('postgresql://user:pass@localhost:5432/pdm_db')
 db.connect()
 
-# Telemetry records from simulation
+# Telemetry records from simulation (flat state dict)
 turbine_records = [
     {
         'equipment_id': 1,
@@ -248,18 +326,25 @@ turbine_records = [
         'operating_hours': 1500.5,
         'state': {
             'speed': 9500,
+            'speed_target': 9500,
             'exhaust_gas_temp': 545.2,
             'oil_temp': 95.3,
             'fuel_flow': 2.1,
+            'efficiency': 0.82,
+            'ambient_temp': 25.0,
+            'ambient_pressure': 101.3,
             'vibration_rms': 1.2,
             'vibration_peak': 3.5,
-            'efficiency': 0.82,
-            'health': {
-                'hgp': 0.85,
-                'blade': 0.90,
-                'bearing': 0.78,
-                'fuel': 0.88
-            }
+            'vibration_crest_factor': 2.9,
+            'vibration_kurtosis': 3.1,
+            'health_hgp': 0.85,
+            'health_blade': 0.90,
+            'health_bearing': 0.78,
+            'health_fuel': 0.88,
+            'num_active_faults': 0,
+            'total_faults_initiated': 0,
+            'upset_active': False,
+            'features': '{"vibration_trend_7d": 0.02, "temp_variation_24h": 1.5}'
         }
     },
     # ... more records
@@ -310,7 +395,7 @@ print(f"Inserted {count} failure records")
 
 ```python
 from src.ingestion.data_pipeline import DataPipeline
-from src.ingestion.bulk_insert import bulk_insert_telemetry, insert_failures
+from src.ingestion.bulk_insert import bulk_insert_telemetry, insert_failures, insert_maintenance
 
 pipeline = DataPipeline(db_url, duration_days=180, sample_interval_min=10)
 pipeline.connect()
@@ -327,6 +412,12 @@ bulk_insert_telemetry(pipeline.db, pump_tel, 'pump')
 
 # Insert failures
 insert_failures(pipeline.db, failures)
+
+# Insert maintenance events
+# Note: maintenance_start records are mixed into telemetry lists by _worker_simulate()
+maintenance_records = [r for r in turbine_tel + compressor_tel + pump_tel
+                       if r.get('type') == 'maintenance_start']
+insert_maintenance(pipeline.db, maintenance_records)
 ```
 
 ### Handling Large Datasets
@@ -386,7 +477,7 @@ return str(value) if value is not None else '\\N'
 
 ### Schema Path
 
-The module sets the search path before insertion to ensure table visibility:
+The module sets the search path before insertion to ensure table visibility across all schemas:
 
 ```python
 cursor.execute("SET search_path TO telemetry, master_data, failure_events, public")
@@ -455,24 +546,48 @@ ANALYZE telemetry.gas_turbine_telemetry;
 ### Telemetry Tables
 
 ```sql
--- Gas Turbine Telemetry
+-- Gas Turbine Telemetry (representative — see 03_create_telemetry_tables.sql for full DDL)
 CREATE TABLE telemetry.gas_turbine_telemetry (
-    telemetry_id SERIAL PRIMARY KEY,
-    turbine_id INTEGER REFERENCES master_data.gas_turbines(turbine_id),
+    telemetry_id BIGSERIAL PRIMARY KEY,
+    turbine_id INT NOT NULL REFERENCES master_data.gas_turbines(turbine_id),
     sample_time TIMESTAMP NOT NULL,
-    operating_hours NUMERIC(10,2),
-    speed_rpm NUMERIC(10,2),
-    egt_celsius NUMERIC(8,2),
-    oil_temp_celsius NUMERIC(6,2),
-    fuel_flow_kg_s NUMERIC(8,4),
-    vibration_rms_mm_s NUMERIC(8,4),
-    vibration_peak_mm_s NUMERIC(8,4),
-    efficiency_fraction NUMERIC(5,4),
-    health_hgp NUMERIC(5,4),
-    health_blade NUMERIC(5,4),
-    health_bearing NUMERIC(5,4),
-    health_fuel NUMERIC(5,4),
-    -- ... additional columns
+    operating_hours FLOAT,
+    -- Core measurements
+    speed_rpm FLOAT,
+    speed_target_rpm FLOAT,
+    egt_celsius FLOAT,
+    oil_temp_celsius FLOAT,
+    fuel_flow_kg_s FLOAT,
+    compressor_discharge_temp_celsius FLOAT,
+    compressor_discharge_pressure_kpa FLOAT,
+    efficiency_fraction FLOAT,
+    -- Environmental conditions
+    ambient_temp_celsius FLOAT,
+    ambient_pressure_kpa FLOAT,
+    -- Vibration metrics
+    vibration_rms_mm_s FLOAT,
+    vibration_peak_mm_s FLOAT,
+    vibration_crest_factor FLOAT,
+    vibration_kurtosis FLOAT,
+    -- Health indicators
+    health_hgp FLOAT,
+    health_blade FLOAT,
+    health_bearing FLOAT,
+    health_fuel FLOAT,
+    -- Fault tracking
+    num_active_faults INT,
+    total_faults_initiated INT,
+    -- Process upset tracking
+    upset_active BOOLEAN,
+    upset_type VARCHAR(50),
+    upset_severity FLOAT,
+    -- Derived features
+    vibration_trend_7d FLOAT,
+    temp_variation_24h FLOAT,
+    speed_stability FLOAT,
+    efficiency_degradation_rate FLOAT,
+    load_factor FLOAT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
@@ -489,6 +604,22 @@ CREATE TABLE failure_events.gas_turbine_failures (
     speed_rpm_at_failure NUMERIC(10,2),
     egt_celsius_at_failure NUMERIC(8,2),
     vibration_mm_s_at_failure NUMERIC(8,4)
+);
+```
+
+### Maintenance Tables
+
+```sql
+-- Gas Turbine Maintenance (representative — compressor/pump tables follow same pattern)
+CREATE TABLE maintenance_events.gas_turbine_maintenance (
+    maintenance_id BIGSERIAL PRIMARY KEY,
+    turbine_id INT NOT NULL REFERENCES master_data.gas_turbines(turbine_id),
+    start_time TIMESTAMP NOT NULL,
+    end_time TIMESTAMP,
+    failure_code VARCHAR(50),
+    downtime_hours FLOAT,
+    repaired_components JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
