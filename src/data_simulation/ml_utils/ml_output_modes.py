@@ -15,6 +15,7 @@ Reference: Industrial SCADA systems, real-world labeling practices
 """
 
 from typing import Dict, List, Optional
+from collections import deque
 from enum import Enum
 from datetime import datetime, timedelta
 import json
@@ -60,6 +61,13 @@ class DataOutputFormatter:
         self.output_mode = output_mode
         self.label_delay_hours = label_delay_hours
         self.label_buffer = []  # For delayed labels mode
+
+        # Rolling history buffers for derived feature computation
+        # Window sizes assume 5-min sample intervals
+        self._vibration_history = deque(maxlen=2016)    # 7 days
+        self._temperature_history = deque(maxlen=288)   # 24 hours
+        self._speed_history = deque(maxlen=12)          # 1 hour
+        self._efficiency_history = deque(maxlen=2016)   # 7 days
 
     def format_record(self,
                      telemetry_record: Dict,
@@ -145,12 +153,8 @@ class DataOutputFormatter:
     def _format_with_features(self, record: Dict, timestamp: datetime) -> Dict:
         """Add derived features commonly used in ML pipelines."""
         formatted = record.copy()
-
-        # Rolling statistics (simulated - in real pipeline computed from history)
-        # Here we'll add placeholders showing what features would be computed
         # Serialize to JSON for database compatibility
         formatted['features'] = json.dumps(self._compute_derived_features(record))
-
         return formatted
 
     def _add_realistic_noise(self, record: Dict) -> Dict:
@@ -202,22 +206,86 @@ class DataOutputFormatter:
 
         return noisy
 
+    def _extract_telemetry_values(self, record: Dict) -> Dict:
+        """Extract canonical telemetry values from equipment-specific keys."""
+        values = {}
+
+        # Vibration: prefer vibration_rms, fall back to orbit_amplitude (compressor)
+        if 'vibration_rms' in record:
+            values['vibration'] = record['vibration_rms']
+        elif 'orbit_amplitude' in record:
+            values['vibration'] = record['orbit_amplitude']
+
+        # Temperature: max of available bearing/process temps
+        temp_keys = ['bearing_temp_de', 'bearing_temp_nde', 'fluid_temp',
+                     'exhaust_gas_temp', 'oil_temp', 'discharge_temp']
+        temps = [record[k] for k in temp_keys if k in record and isinstance(record[k], (int, float))]
+        if temps:
+            values['temperature'] = max(temps)
+
+        # Speed and efficiency: universal keys
+        if 'speed' in record:
+            values['speed'] = record['speed']
+        if 'efficiency' in record:
+            values['efficiency'] = record['efficiency']
+
+        return values
+
     def _compute_derived_features(self, record: Dict) -> Dict:
         """
-        Compute derived features for ML.
+        Compute derived features from rolling history buffers.
 
-        In production, these would be computed from rolling windows
-        of historical data. Here we show what features would be extracted.
+        Features are computed from deque-based sliding windows that fill
+        progressively. Returns 0.0 during cold-start (< 2 samples).
         """
+        values = self._extract_telemetry_values(record)
+
+        # Append to history buffers (guard against NaN)
+        if 'vibration' in values and np.isfinite(values['vibration']):
+            self._vibration_history.append(values['vibration'])
+        if 'temperature' in values and np.isfinite(values['temperature']):
+            self._temperature_history.append(values['temperature'])
+        if 'speed' in values and np.isfinite(values['speed']):
+            self._speed_history.append(values['speed'])
+        if 'efficiency' in values and np.isfinite(values['efficiency']):
+            self._efficiency_history.append(values['efficiency'])
+
         features = {}
 
-        # Example features (placeholders - real implementation needs historical data)
-        features['vibration_trend_7d'] = 0.0  # 7-day trend in vibration
-        features['temp_variation_24h'] = 0.0  # 24-hour temperature variability
-        features['speed_stability'] = 0.0     # Speed stability metric
-        features['efficiency_degradation_rate'] = 0.0  # Rate of efficiency loss
+        # vibration_trend_7d: slope of linear fit over vibration history
+        if len(self._vibration_history) >= 2:
+            x = np.arange(len(self._vibration_history))
+            coeffs = np.polyfit(x, list(self._vibration_history), 1)
+            features['vibration_trend_7d'] = float(coeffs[0])
+        else:
+            features['vibration_trend_7d'] = 0.0
 
-        # Ratio features
+        # temp_variation_24h: std deviation over temperature history
+        if len(self._temperature_history) >= 2:
+            features['temp_variation_24h'] = float(np.std(list(self._temperature_history)))
+        else:
+            features['temp_variation_24h'] = 0.0
+
+        # speed_stability: coefficient of variation over speed history
+        if len(self._speed_history) >= 2:
+            arr = np.array(self._speed_history)
+            mean_speed = np.mean(arr)
+            if mean_speed > 0:
+                features['speed_stability'] = float(np.std(arr) / mean_speed)
+            else:
+                features['speed_stability'] = 0.0
+        else:
+            features['speed_stability'] = 0.0
+
+        # efficiency_degradation_rate: slope over efficiency history
+        if len(self._efficiency_history) >= 2:
+            x = np.arange(len(self._efficiency_history))
+            coeffs = np.polyfit(x, list(self._efficiency_history), 1)
+            features['efficiency_degradation_rate'] = float(coeffs[0])
+        else:
+            features['efficiency_degradation_rate'] = 0.0
+
+        # Ratio features (from current record)
         if 'discharge_pressure' in record and 'suction_pressure' in record:
             suction = record.get('suction_pressure', 1)
             if suction > 0:
