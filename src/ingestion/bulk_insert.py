@@ -211,8 +211,6 @@ def bulk_insert_telemetry(db, records: List[Dict], equipment_type: str) -> int:
     columns_map, table = config[equipment_type]
     defaults = {}  # Missing values become NULL via \\N
 
-    logger.info(f"Bulk inserting {len(records):,} {equipment_type} records into {table}")
-
     # Build CSV buffer for COPY command
     buffer = StringIO()
     writer = csv.writer(buffer, delimiter='\t')
@@ -235,7 +233,6 @@ def bulk_insert_telemetry(db, records: List[Dict], equipment_type: str) -> int:
         cursor.copy_expert(sql, buffer)
 
         raw_conn.commit()
-        logger.info(f"Successfully inserted {len(records):,} records")
     except Exception as e:
         logger.error(f"Bulk insert failed: {e}")
         raise
