@@ -134,6 +134,7 @@ PUMP_COLUMNS = {
     'health_bearing_de': 'health_bearing_de',
     'health_bearing_nde': 'health_bearing_nde',
     # Derived features (extracted from JSON 'features' field)
+    'temp_variation_24h': 'temp_variation_24h',
     'vibration_trend_7d': 'vibration_trend_7d',
     'speed_stability': 'speed_stability',
     'efficiency_degradation_rate': 'efficiency_degradation_rate',
