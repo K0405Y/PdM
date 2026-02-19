@@ -614,11 +614,7 @@ class Pump:
 
         if self.use_output_formatter:
             try:
-                self.output_formatter = DataOutputFormatter(
-                    mode=output_mode,
-                    include_raw=True,
-                    include_derived=True
-                )
+                self.output_formatter = DataOutputFormatter(output_mode=output_mode)
             except Exception as e:
                 self.use_output_formatter = False
         
@@ -970,10 +966,9 @@ class Pump:
         }
         
         #Apply output formatting if enabled
-        if self.use_output_formatter and vib_enhanced:
+        if self.use_output_formatter:
             try:
-                formatted_state = self.output_formatter.format(state, vib_enhanced)
-                state.update(formatted_state)
+                state = self.output_formatter.format_record(state, self.current_timestamp)
             except Exception as e:
                 pass
         
