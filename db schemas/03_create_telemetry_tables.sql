@@ -141,6 +141,7 @@ CREATE TABLE IF NOT EXISTS telemetry.pump_telemetry (
     health_bearing_de FLOAT,
     health_bearing_nde FLOAT,
     -- Derived features (DERIVED_FEATURES output mode)
+    temp_variation_24h FLOAT,
     vibration_trend_7d FLOAT,
     speed_stability FLOAT,
     efficiency_degradation_rate FLOAT,
