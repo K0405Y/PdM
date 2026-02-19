@@ -2,5 +2,6 @@
 CREATE SCHEMA IF NOT EXISTS master_data;
 CREATE SCHEMA IF NOT EXISTS telemetry;
 CREATE SCHEMA IF NOT EXISTS failure_events;
+CREATE SCHEMA IF NOT EXISTS maintenance_events;
 -- Set search path
-ALTER ROLE postgres SET search_path TO master_data, telemetry, failure_events, public;
+ALTER ROLE postgres SET search_path TO master_data, telemetry, failure_events, maintenance_events, public;
