@@ -131,7 +131,6 @@ CREATE TABLE IF NOT EXISTS telemetry.pump_telemetry (
     motor_current_amps FLOAT,
     motor_current_ratio FLOAT,
     -- Seal condition
-    seal_health FLOAT,
     seal_leakage_rate FLOAT,
     -- Performance
     bep_deviation_percent FLOAT,
