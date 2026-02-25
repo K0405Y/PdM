@@ -275,7 +275,7 @@ class WeatherAPIClient(EnvironmentalDataSource):
             'wind_speed_m_s': round(wind_speed, 2),
             'hour_of_day': timestamp.hour,
             'day_of_year': timestamp.timetuple().tm_yday,
-            'location': f"real_weather_{self.config.api_provider}",
+            'location': self.config.get_location_query(),
             'temp_derating_factor': round(temp_derating_factor, 4),
             'density_ratio': round(density_ratio, 4),
             'corrosion_factor': 1.0,  # Would need additional data
