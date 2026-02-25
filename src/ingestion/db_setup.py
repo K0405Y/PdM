@@ -117,21 +117,23 @@ class MasterData:
             session.close()
 
     def seed_turbines(self, count: int) -> List[int]:
-        """Create gas turbine records."""
+        """Create gas turbine records"""
         ids = []
         session = self.db.get_session()
 
         try:
             for i in range(count):
+                name = f"GT-{1 + i}"
                 result = session.execute(text("""
                     INSERT INTO master_data.gas_turbines
                     (name, serial_number, location, installed_date,
                      initial_health_hgp, initial_health_blade,
                      initial_health_bearing, initial_health_fuel)
                     VALUES (:name, :sn, :loc, :date, :hgp, :blade, :bearing, :fuel)
+                    ON CONFLICT (name) DO NOTHING
                     RETURNING turbine_id
                 """), {
-                    'name': f"GT-{1 + i}",
+                    'name': name,
                     'sn': f"SN-GT-{1 + i}",
                     'loc': f"Platform-{i % 3 + 1}",
                     'date': datetime(2024, 1, 1).date() + timedelta(days=random.randint(0, 364)),
@@ -140,31 +142,41 @@ class MasterData:
                     'bearing': random.uniform(0.70, 0.98),
                     'fuel': random.uniform(0.70, 0.98)
                 })
-                ids.append(result.scalar())
+                tid = result.scalar()
+                if tid is None:
+                    tid = session.execute(text(
+                        "SELECT turbine_id FROM master_data.gas_turbines WHERE name = :name"
+                    ), {'name': name}).scalar()
+                ids.append(tid)
 
             session.commit()
             logger.info(f"Seeded {count} turbines")
+        except Exception:
+            session.rollback()
+            raise
         finally:
             session.close()
 
         return ids
 
     def seed_compressors(self, count: int) -> List[int]:
-        """Create compressor records."""
+        """Create compressor records"""
         ids = []
         session = self.db.get_session()
 
         try:
             for i in range(count):
+                name = f"COMP-{1 + i}"
                 result = session.execute(text("""
                     INSERT INTO master_data.compressors
                     (name, serial_number, location, installed_date,
                      design_flow_m3h, design_head_kj_kg,
                      initial_health_impeller, initial_health_bearing)
                     VALUES (:name, :sn, :loc, :date, :flow, :head, :imp, :bear)
+                    ON CONFLICT (name) DO NOTHING
                     RETURNING compressor_id
                 """), {
-                    'name': f"COMP-{1 + i}",
+                    'name': name,
                     'sn': f"SN-COMP-{1 + i}",
                     'loc': f"Facility-{i % 4 + 1}",
                     'date': datetime(2024, 1, 1).date() + timedelta(days=random.randint(0, 364)),
@@ -173,17 +185,25 @@ class MasterData:
                     'imp': random.uniform(0.88, 0.98),
                     'bear': random.uniform(0.85, 0.98)
                 })
-                ids.append(result.scalar())
+                cid = result.scalar()
+                if cid is None:
+                    cid = session.execute(text(
+                        "SELECT compressor_id FROM master_data.compressors WHERE name = :name"
+                    ), {'name': name}).scalar()
+                ids.append(cid)
 
             session.commit()
             logger.info(f"Seeded {count} compressors")
+        except Exception:
+            session.rollback()
+            raise
         finally:
             session.close()
 
         return ids
 
     def seed_pumps(self, count: int) -> List[int]:
-        """Create pump records."""
+        """Create pump records"""
         ids = []
         services = [
             {'name': 'Crude Booster', 'flow': 200, 'head': 100, 'density': 850},
@@ -198,6 +218,7 @@ class MasterData:
         try:
             for i in range(count):
                 service = services[i % len(services)]
+                name = f"PUMP-{1 + i}"
                 result = session.execute(text("""
                     INSERT INTO master_data.pumps
                     (name, serial_number, service_type, location, installed_date,
@@ -206,9 +227,10 @@ class MasterData:
                      initial_health_bearing_de, initial_health_bearing_nde)
                     VALUES (:name, :sn, :svc, :loc, :date, :flow, :head, :speed, :dens,
                             :imp, :seal, :bde, :bnde)
+                    ON CONFLICT (name) DO NOTHING
                     RETURNING pump_id
                 """), {
-                    'name': f"PUMP-{1 + i}",
+                    'name': name,
                     'sn': f"SN-PUMP-{1 + i}",
                     'svc': service['name'],
                     'loc': f"Platform-{i % 5 + 1}",
@@ -222,10 +244,18 @@ class MasterData:
                     'bde': random.uniform(0.70, 0.98),
                     'bnde': random.uniform(0.70, 0.98)
                 })
-                ids.append(result.scalar())
+                pid = result.scalar()
+                if pid is None:
+                    pid = session.execute(text(
+                        "SELECT pump_id FROM master_data.pumps WHERE name = :name"
+                    ), {'name': name}).scalar()
+                ids.append(pid)
 
             session.commit()
             logger.info(f"Seeded {count} pumps")
+        except Exception:
+            session.rollback()
+            raise
         finally:
             session.close()
 
