@@ -354,6 +354,13 @@ class CachedWeatherEnvironment(EnvironmentalDataSource):
         conn.commit()
         conn.close()
 
+    def _normalize_timestamp(self, timestamp: datetime) -> datetime:
+        """Normalize timestamp to naive UTC, rounded to the hour, for consistent cache keys."""
+        if timestamp.tzinfo is not None:
+            from datetime import timezone
+            timestamp = timestamp.astimezone(timezone.utc).replace(tzinfo=None)
+        return timestamp.replace(minute=0, second=0, microsecond=0)
+
     def get_conditions(self, elapsed_hours: float, timestamp: Optional[datetime] = None) -> Dict:
         """
         Get weather conditions with caching.
@@ -368,8 +375,8 @@ class CachedWeatherEnvironment(EnvironmentalDataSource):
         if timestamp is None:
             timestamp = datetime.now()
 
-        # Round timestamp to nearest hour for cache efficiency
-        timestamp = timestamp.replace(minute=0, second=0, microsecond=0)
+        # Normalize to naive UTC, rounded to the hour, for consistent cache keys
+        timestamp = self._normalize_timestamp(timestamp)
 
         # Try cache first
         if self.config.cache_enabled:
@@ -402,6 +409,7 @@ class CachedWeatherEnvironment(EnvironmentalDataSource):
 
     def _get_from_cache(self, timestamp: datetime) -> Optional[Dict]:
         """Retrieve conditions from cache if available and fresh."""
+        timestamp = self._normalize_timestamp(timestamp)
         conn = sqlite3.connect(self._cache_db_path)
         cursor = conn.cursor()
 
@@ -452,6 +460,7 @@ class CachedWeatherEnvironment(EnvironmentalDataSource):
 
     def _store_in_cache(self, timestamp: datetime, conditions: Dict):
         """Store conditions in cache."""
+        timestamp = self._normalize_timestamp(timestamp)
         conn = sqlite3.connect(self._cache_db_path)
         cursor = conn.cursor()
 
@@ -488,12 +497,22 @@ class CachedWeatherEnvironment(EnvironmentalDataSource):
         if not self.weather_client:
             raise ValueError("Weather client required for cache preloading")
 
-        current = start_date
+        current = self._normalize_timestamp(start_date)
+        end_date = self._normalize_timestamp(end_date)
         cached_count = 0
+        skipped_count = 0
 
-        print(f"Preloading weather cache from {start_date} to {end_date}...")
+        print(f"Preloading weather cache from {current} to {end_date}...")
 
         while current <= end_date:
+            # Skip timestamps that are already cached and fresh
+            if self.config.cache_enabled:
+                existing = self._get_from_cache(current)
+                if existing is not None:
+                    skipped_count += 1
+                    current += timedelta(hours=interval_hours)
+                    continue
+
             try:
                 conditions = self.weather_client.get_conditions(0, current)
                 self._store_in_cache(current, conditions)
@@ -507,7 +526,7 @@ class CachedWeatherEnvironment(EnvironmentalDataSource):
 
             current += timedelta(hours=interval_hours)
 
-        print(f"Cache preload complete: {cached_count} data points stored")
+        print(f"Cache preload complete: {cached_count} fetched, {skipped_count} already cached")
 
 
 # Convenience function for creating hybrid environment
