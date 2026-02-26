@@ -24,7 +24,6 @@ class OperatingState(str, Enum):
     idle = "idle"
     startup = "startup"
     shutdown = "shutdown"
-    maintenance = "maintenance"
 
 # Ingestion
 class TelemetryRecord(BaseModel):
