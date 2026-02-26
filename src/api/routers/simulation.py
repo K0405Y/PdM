@@ -155,6 +155,45 @@ def trigger_simulation(
         "error": None,
     }
 
+    def _build_constructor_kwargs(eq_type: str, config: dict) -> dict:
+        """Map DB config rows to equipment constructor parameters."""
+        if eq_type == "turbine":
+            return {
+                "name": config.get("name", ""),
+                "initial_health": {
+                    "hgp": config.get("initial_health_hgp", 0.92),
+                    "blade": config.get("initial_health_blade", 0.95),
+                    "bearing": config.get("initial_health_bearing", 0.90),
+                    "fuel": config.get("initial_health_fuel", 0.93),
+                },
+            }
+        elif eq_type == "compressor":
+            return {
+                "name": config.get("name", ""),
+                "design_flow": config.get("design_flow_m3h", 1500.0),
+                "design_head": config.get("design_head_kj_kg", 8000.0),
+                "initial_health": {
+                    "impeller": config.get("initial_health_impeller", 0.92),
+                    "bearing": config.get("initial_health_bearing", 0.88),
+                },
+            }
+        elif eq_type == "pump":
+            return {
+                "name": config.get("name", ""),
+                "design_flow": config.get("design_flow_m3h", 150.0),
+                "design_head": config.get("design_head_m", 80.0),
+                "design_speed": config.get("design_speed_rpm", 3000),
+                "fluid_density": config.get("fluid_density_kg_m3", 850.0),
+                "initial_health": {
+                    "impeller": config.get("initial_health_impeller", 0.94),
+                    "seal": config.get("initial_health_seal", 0.93),
+                    "bearing_de": config.get("initial_health_bearing_de", 0.90),
+                    "bearing_nde": config.get("initial_health_bearing_nde", 0.92),
+                },
+            }
+        else:
+            raise ValueError(f"Unknown equipment type: {eq_type}")
+
     def _run_simulation():
         equipment_classes = {
             "turbine": GasTurbine,
@@ -190,20 +229,26 @@ def trigger_simulation(
                 except Exception as e:
                     logger.warning("Cache preload failed, will fetch per tick: %s", e)
 
-            for config in configs:
+            logger.info(
+                "Starting simulation: %d %s(s), %d days, %d-min intervals",
+                len(configs), request.equipment_type,
+                request.duration_days, request.sample_interval_min,
+            )
+
+            for idx, config in enumerate(configs, 1):
                 eq_type = request.equipment_type
                 EquipmentClass = equipment_classes[eq_type]
 
                 # Determine equipment ID from config
                 id_keys = {"turbine": "turbine_id", "compressor": "compressor_id", "pump": "pump_id"}
                 eq_id = config[id_keys[eq_type]]
+                logger.info(
+                    "Simulating %s %d/%d (ID=%s)",
+                    eq_type, idx, len(configs), eq_id,
+                )
 
                 # Build equipment instance from config
-                constructor_kwargs = {
-                    k: v for k, v in config.items()
-                    if k not in (id_keys[eq_type], "name", "serial_number", "location",
-                                 "installed_date", "status")
-                }
+                constructor_kwargs = _build_constructor_kwargs(eq_type, config)
                 if env_model is not None:
                     constructor_kwargs["env_model"] = env_model
                     constructor_kwargs["enable_environmental"] = True
@@ -227,14 +272,23 @@ def trigger_simulation(
                 total_telemetry.extend(telemetry_batch)
                 _jobs[job_id]["records_generated"] = len(total_telemetry)
                 _jobs[job_id]["failures_generated"] = len(total_failures)
+                logger.info(
+                    "  %s ID=%s done: %d records, %d failures",
+                    eq_type, eq_id, len(telemetry_batch), len(total_failures),
+                )
+
+            logger.info(
+                "Simulation complete: %d total records, %d failures, %d maintenance events",
+                len(total_telemetry), len(total_failures), len(total_maintenance),
+            )
 
             # Auto-ingest if requested
             if request.auto_ingest and total_telemetry:
                 bulk_insert_telemetry(db, total_telemetry, request.equipment_type)
             if request.auto_ingest and total_failures:
-                insert_failures(db, total_failures, request.equipment_type)
+                insert_failures(db, total_failures) 
             if request.auto_ingest and total_maintenance:
-                insert_maintenance(db, total_maintenance, request.equipment_type)
+                insert_maintenance(db, total_maintenance)
 
             _jobs[job_id]["status"] = "completed"
             _jobs[job_id]["completed_at"] = datetime.now()
