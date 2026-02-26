@@ -86,11 +86,20 @@ class MaintenanceScheduler:
             MaintenanceType.EMERGENCY: 0.15      # Quick fix, limited restoration
         }
 
+        # Condition-based cooldown (minimum hours between condition-triggered maintenance)
+        self.condition_cooldown = {
+            'routine': 500,
+            'minor': 2000,
+            'major': 6000,
+            'emergency': 0,       # Emergency always allowed
+        }
+
         # Tracking
         self.last_routine = 0.0
         self.last_minor = 0.0
         self.last_major = 0.0
         self.last_emergency = 0.0
+        self.last_maintenance_hours = 0.0  # Operating hours at last maintenance of any type
         self.maintenance_history: List[MaintenanceAction] = []
 
     def check_maintenance_required(self,
@@ -111,16 +120,20 @@ class MaintenanceScheduler:
         # Check condition-based triggers (highest priority)
         if self.enable_condition_based:
             min_health = min(health_state.values())
+            hours_since_last = operating_hours - self.last_maintenance_hours
 
-            # Emergency maintenance has highest priority (critical health)
+            # Emergency is always allowed regardless of cooldown
             if min_health < self.condition_thresholds['emergency']:
                 return MaintenanceType.EMERGENCY
-            elif min_health < self.condition_thresholds['major']:
-                return MaintenanceType.MAJOR_OVERHAUL
-            elif min_health < self.condition_thresholds['minor']:
-                return MaintenanceType.MINOR_OVERHAUL
-            elif min_health < self.condition_thresholds['routine']:
-                return MaintenanceType.ROUTINE
+
+            # Skip non-emergency condition-based triggers during cooldown
+            if hours_since_last >= self.condition_cooldown['routine']:
+                if min_health < self.condition_thresholds['major']:
+                    return MaintenanceType.MAJOR_OVERHAUL
+                elif min_health < self.condition_thresholds['minor']:
+                    return MaintenanceType.MINOR_OVERHAUL
+                elif min_health < self.condition_thresholds['routine']:
+                    return MaintenanceType.ROUTINE
 
         # Check time-based triggers
         if self.enable_time_based:
@@ -211,6 +224,8 @@ class MaintenanceScheduler:
         elif maintenance_type == MaintenanceType.EMERGENCY:
             self.last_emergency = operating_hours
             # Emergency doesn't reset planned maintenance schedules
+
+        self.last_maintenance_hours = operating_hours
 
         # Add to history
         self.maintenance_history.append(action)
