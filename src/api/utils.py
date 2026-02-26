@@ -38,8 +38,6 @@ def rows_to_dicts(rows, columns: List[str]) -> List[Dict[str, Any]]:
     """Convert multiple SQLAlchemy rows to list of dicts."""
     return [dict(zip(columns, row)) for row in rows]
 
-
-
 # Cursor-based pagination (for telemetry — millions of rows)
 def build_cursor_query(
     base_sql: str,
