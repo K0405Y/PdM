@@ -1,5 +1,5 @@
 """
-PdM API — FastAPI app.
+PdM API.
 Provides REST endpoints for master data, weather, telemetry, ML pipelines,
 and simulation management.
 """
@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="PdM — Predictive Maintenance API",
+    title="Predictive Maintenance API",
     description=(
         "REST API for equipment master data, location weather, telemetry "
         "ingestion/query, ML training pipelines, and simulation management."
