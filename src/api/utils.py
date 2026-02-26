@@ -11,14 +11,11 @@ from sqlalchemy.orm import Session
 def classify_operating_state(
     speed: float,
     speed_target: float,
-    in_maintenance: bool = False,
 ) -> str:
     """Infer operating state from physical parameters.
 
-    Returns one of: 'running', 'idle', 'startup', 'shutdown', 'maintenance'.
+    Returns one of: 'running', 'idle', 'startup', 'shutdown'.
     """
-    if in_maintenance:
-        return "maintenance"
     if speed == 0 and speed_target == 0:
         return "idle"
     if speed_target > 0 and speed < speed_target * 0.5:
