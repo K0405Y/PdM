@@ -621,7 +621,7 @@ class GasTurbine:
         # 1. Apply environmental conditions if enabled
         if self.use_environmental:
             try:
-                env_cond = self.env_model.get_conditions(self.elapsed_hours)
+                env_cond = self.env_model.get_conditions(self.elapsed_hours, self.current_timestamp)
                 self.ambient_temp = env_cond.get('ambient_temp_C', self.ambient_temp)
                 self.ambient_pressure = env_cond.get('pressure_kPa', self.ambient_pressure)
             except:

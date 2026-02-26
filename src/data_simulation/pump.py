@@ -547,7 +547,7 @@ class Pump:
         # Initialize enhancement modules
         self.vibration_generator = None
         self.thermal_model = None
-        self.environmental_conditions = None
+        self.env_model = None
         self.maintenance_scheduler = None
         self.fault_simulator = None
         self.upset_simulator = None
@@ -573,13 +573,17 @@ class Pump:
 
         if self.use_environmental:
             try:
-                self.environmental_conditions = EnvironmentalConditions(
-                    location_type=location_type,
-                    base_temp=40.0,
-                    base_pressure=101.325
-                )
+                if env_model is not None:
+                    self.env_model = env_model
+                elif location_type is not None:
+                    self.env_model = EnvironmentalConditions(
+                        location_type=location_type
+                    )
+                else:
+                    self.use_environmental = False
             except Exception as e:
                 self.use_environmental = False
+                self.env_model = None
 
         if self.use_maintenance:
             try:
@@ -730,20 +734,17 @@ class Pump:
             Exception: With failure code on critical failure
         """
         # Apply environmental conditions if enabled
+        ambient_temp = 40.0
+        ambient_pressure = 101.325
+        corrosion_factor = 1.0
         if self.use_environmental:
             try:
-                env_state = self.environmental_conditions.get_state()
-                ambient_temp = env_state.get('ambient_temp', 40.0)
-                ambient_pressure = env_state.get('ambient_pressure', 101.325)
-                corrosion_factor = env_state.get('corrosion_factor', 1.0)
-            except Exception as e:
-                ambient_temp = 40.0
-                ambient_pressure = 101.325
-                corrosion_factor = 1.0
-        else:
-            ambient_temp = 40.0
-            ambient_pressure = 101.325
-            corrosion_factor = 1.0
+                env_cond = self.env_model.get_conditions(self.elapsed_hours, self.current_timestamp)
+                ambient_temp = env_cond.get('ambient_temp_C', ambient_temp)
+                ambient_pressure = env_cond.get('pressure_kPa', ambient_pressure)
+                corrosion_factor = env_cond.get('corrosion_factor', corrosion_factor)
+            except Exception:
+                pass
         
         # Update speed toward target
         # Fast rate when already running (speed changes are near-instant at 15-min intervals)
