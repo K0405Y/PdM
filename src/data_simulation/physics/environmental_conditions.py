@@ -215,7 +215,7 @@ class EnvironmentalConditions:
         self.day_of_year = start_day_of_year
         self.hour_of_day = 0.0
 
-    def get_conditions(self, elapsed_hours: float) -> Dict:
+    def get_conditions(self, elapsed_hours: float, timestamp=None) -> Dict:
         """
         Get current environmental conditions.
 
