@@ -113,8 +113,8 @@ def ingest_telemetry(
 def query_telemetry(
     equipment_type: EquipmentTypeEnum,
     equipment_id: int,
-    start_time: Optional[str] = Query(None, description="ISO 8601 start time"),
-    end_time: Optional[str] = Query(None, description="ISO 8601 end time"),
+    start_time: Optional[str] = Query(None, description="Start time (YYYY-MM-DD HH:MM:SS)"),
+    end_time: Optional[str] = Query(None, description="End time (YYYY-MM-DD HH:MM:SS)"),
     operating_state: Optional[OperatingState] = Query(None, description="Filter by operating state"),
     after_id: Optional[int] = Query(None, description="Cursor: telemetry_id to paginate after"),
     limit: int = Query(1000, ge=1, le=5000),
@@ -171,7 +171,6 @@ def query_telemetry(
         limit=limit,
     )
 
-
 # Latest
 @router.get("/{equipment_type}/{equipment_id}/latest", response_model=TelemetryRow)
 def get_latest_telemetry(
@@ -194,7 +193,6 @@ def get_latest_telemetry(
     if not row:
         raise HTTPException(404, "No telemetry data found for this equipment")
     return _enrich_row(dict(zip(columns, row)))
-
 
 
 # Health indicators
@@ -233,15 +231,13 @@ def get_health(
         health_components=dict(zip(config["health_cols"], health_values)),
     )
 
-
-
 # Binned summary
 @router.get("/{equipment_type}/{equipment_id}/summary", response_model=BinnedSummaryResponse)
 def get_summary(
     equipment_type: EquipmentTypeEnum,
     equipment_id: int,
-    start_time: str = Query(..., description="ISO 8601 start time"),
-    end_time: str = Query(..., description="ISO 8601 end time"),
+    start_time: str = Query(..., description="Start time (YYYY-MM-DD HH:MM:SS)"),
+    end_time: str = Query(..., description="End time (YYYY-MM-DD HH:MM:SS)"),
     bin_interval: BinInterval = Query(BinInterval.one_hour),
     session: Session = Depends(get_db_session),
 ):
@@ -310,14 +306,13 @@ def get_summary(
         bins=bins,
     )
 
-
 # Enriched telemetry (with environmental conditions)
 @router.get("/{equipment_type}/{equipment_id}/enriched", response_model=CursorPaginatedTelemetry)
 def get_enriched_telemetry(
     equipment_type: EquipmentTypeEnum,
     equipment_id: int,
-    start_time: str = Query(..., description="ISO 8601 start time"),
-    end_time: str = Query(..., description="ISO 8601 end time"),
+    start_time: str = Query(..., description="Start time (YYYY-MM-DD HH:MM:SS)"),
+    end_time: str = Query(..., description="End time (YYYY-MM-DD HH:MM:SS)"),
     location_type: str = Query("tropical", description="Location type for environmental model"),
     use_real_weather: bool = Query(False, description="Use cached real weather if available"),
     after_id: Optional[int] = Query(None),
@@ -385,8 +380,8 @@ def get_enriched_telemetry(
 def get_failures(
     equipment_type: EquipmentTypeEnum,
     equipment_id: int,
-    start_time: Optional[str] = Query(None),
-    end_time: Optional[str] = Query(None),
+    start_time: Optional[str] = Query(None, description="Start time (YYYY-MM-DD HH:MM:SS)"),
+    end_time: Optional[str] = Query(None, description="End time (YYYY-MM-DD HH:MM:SS)"),
     session: Session = Depends(get_db_session),
 ):
     """Get failure event history for an equipment unit."""
@@ -421,15 +416,13 @@ def get_failures(
         ))
     return items
 
-
-
 # Maintenance history
 @router.get("/maintenance/{equipment_type}/{equipment_id}", response_model=List[MaintenanceEventResponse])
 def get_maintenance(
     equipment_type: EquipmentTypeEnum,
     equipment_id: int,
-    start_time: Optional[str] = Query(None),
-    end_time: Optional[str] = Query(None),
+    start_time: Optional[str] = Query(None, description="Start time (YYYY-MM-DD HH:MM:SS)"),
+    end_time: Optional[str] = Query(None, description="End time (YYYY-MM-DD HH:MM:SS)"),
     session: Session = Depends(get_db_session),
 ):
     """Get maintenance event history for an equipment unit."""
