@@ -37,6 +37,8 @@ class SimulationRequest(BaseModel):
     sample_interval_min: int = Field(5, ge=1, le=60)
     degradation_multiplier: float = Field(1.0, ge=0.1, le=10.0)
     auto_ingest: bool = True
+    start_time: Optional[datetime] = Field(
+        None, description="Simulation start time (ISO 8601). Defaults to now - duration_days.")
 
     weather_location_name: Optional[str] = Field(
         None, description="Location name for weather API (e.g., 'Lagos, Nigeria')")
@@ -105,6 +107,7 @@ def _build_env_model(request: SimulationRequest):
         latitude=request.weather_latitude or 0.0,
         longitude=request.weather_longitude or 0.0,
         cache_enabled=True,
+        cache_ttl_hours=87600
     )
 
     try:
@@ -170,6 +173,23 @@ def trigger_simulation(
             # Build weather environment (shared across all equipment in this run)
             env_model = _build_env_model(request)
 
+            # Resolve simulation start time
+            start_time = request.start_time or (
+                datetime.now() - timedelta(days=request.duration_days)
+            )
+
+            # Pre-populate weather cache
+            if isinstance(env_model, CachedWeatherEnvironment) and env_model.weather_client:
+                try:
+                    end_time = start_time + timedelta(days=request.duration_days)
+                    logger.info(
+                        "Preloading weather cache from %s to %s",
+                        start_time.date(), end_time.date(),
+                    )
+                    env_model.preload_cache(start_time, end_time, interval_hours=1)
+                except Exception as e:
+                    logger.warning("Cache preload failed, will fetch per tick: %s", e)
+
             for config in configs:
                 eq_type = request.equipment_type
                 EquipmentClass = equipment_classes[eq_type]
@@ -190,13 +210,11 @@ def trigger_simulation(
 
                 equipment = EquipmentClass(**constructor_kwargs)
 
-                num_samples = int(request.duration_days * 24 * 60 / request.sample_interval_min)
-                start_time = datetime(2025, 7, 1)
-                interval = timedelta(minutes=request.sample_interval_min)
-
                 telemetry_batch = []
                 for record in sim_equip(
-                    equipment, eq_id, num_samples, start_time, interval,
+                    equipment, eq_id, eq_type,
+                    request.duration_days, request.sample_interval_min,
+                    start_time=start_time,
                     degradation_multiplier=request.degradation_multiplier,
                 ):
                     if record["type"] == "telemetry":
