@@ -51,3 +51,17 @@ class CacheStatsResponse(BaseModel):
     total_cached_entries: int
     oldest_entry: Optional[datetime] = None
     newest_entry: Optional[datetime] = None
+
+class HistoricalWeatherEntry(BaseModel):
+    timestamp: datetime
+    ambient_temp_C: float
+    humidity_percent: float
+    pressure_kPa: float
+    cached_at: datetime
+
+class HistoricalWeatherResponse(BaseModel):
+    location_name: str
+    start_date: datetime
+    end_date: datetime
+    entries: List[HistoricalWeatherEntry]
+    total_entries: int

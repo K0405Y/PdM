@@ -9,7 +9,9 @@ from api.schemas.weather import (
     EnvironmentalProfileResponse,
     WeatherConditionsResponse,
     CachePreloadRequest,
-    CacheStatsResponse
+    CacheStatsResponse,
+    HistoricalWeatherEntry,
+    HistoricalWeatherResponse,
 )
 from data_simulation.physics.environmental_conditions import (
         LocationType, LOCATION_PROFILES, EnvironmentalConditions)
@@ -17,8 +19,9 @@ from data_simulation.physics.weather_api_client import (
     WeatherAPIClient, WeatherConfig, CachedWeatherEnvironment)
 from datetime import datetime
 import glob
-import sqlite3
 import os
+import sqlite3
+
 
 router = APIRouter()
 def _get_profile(location_type: LocationTypeEnum):
@@ -195,3 +198,78 @@ def clear_cache():
     for path in cache_files:
         os.remove(path)
     return {"message": f"Cleared {len(cache_files)} cache file(s)"}
+
+
+# Historical weather data
+@router.get("/historical", response_model=HistoricalWeatherResponse)
+def get_historical_weather(
+    location_name: str = Query(..., description="Location name (e.g., 'Lagos,Nigeria')"),
+    start_date: datetime = Query(..., description="Start date (YYYY-MM-DD HH:MM:SS)"),
+    end_date: datetime = Query(..., description="End date (YYYY-MM-DD HH:MM:SS)")
+):
+    """Fetch historical weather data for a location and date range.
+
+    Returns hourly conditions from cache if available, otherwise fetches from
+    the weather API, caches the results, and returns them.
+    """
+    if end_date <= start_date:
+        raise HTTPException(400, "end_date must be after start_date")
+
+    hours = (end_date - start_date).total_seconds() / 3600
+    if hours > 8760:
+        raise HTTPException(400, "Date range exceeds 1 year maximum")
+
+    settings = get_settings()
+
+    # Build a CachedWeatherEnvironment 
+    config = WeatherConfig(
+        api_key=settings.weather_api_key,
+        api_provider=settings.weather_api_provider,
+        location_name=location_name,
+        cache_enabled=True,
+        cache_ttl_hours=87600)
+
+    client = None
+    if settings.weather_api_key:
+        try:
+            client = WeatherAPIClient(config)
+        except Exception:
+            pass
+
+    fallback = EnvironmentalConditions(location_type=LocationType.TEMPERATE)
+    cached_env = CachedWeatherEnvironment(
+        weather_client=client, fallback_source=fallback, config=config
+    )
+
+    # Iterate hourly through the range — get_conditions checks cache first,
+    # fetches from API on miss, stores result, and returns
+    from datetime import timedelta
+    entries = []
+    current = start_date.replace(minute=0, second=0, microsecond=0)
+    while current <= end_date:
+        try:
+            cond = cached_env.get_conditions(elapsed_hours=0.0, timestamp=current)
+            entries.append(HistoricalWeatherEntry(
+                timestamp=current,
+                ambient_temp_C=cond['ambient_temp_C'],
+                humidity_percent=cond['humidity_percent'],
+                pressure_kPa=cond['pressure_kPa'],
+                cached_at=datetime.now(),
+            ))
+        except Exception:
+            pass  # skip hours that fail both API and fallback
+        current += timedelta(hours=1)
+
+    if not entries:
+        raise HTTPException(
+            500, f"Could not retrieve any weather data for '{location_name}' "
+            f"between {start_date.date()} and {end_date.date()}."
+        )
+
+    return HistoricalWeatherResponse(
+        location_name=location_name,
+        start_date=start_date,
+        end_date=end_date,
+        entries=entries,
+        total_entries=len(entries),
+    )
