@@ -473,6 +473,7 @@ class GasTurbine:
                     self.use_maintenance = False
             else:
                 self.use_maintenance = False
+            self._maintenance_until_hours = 0.0
 
             # Incipient fault simulator
             if enable_incipient_faults:
@@ -614,6 +615,11 @@ class GasTurbine:
         Raises:
             Exception: With failure code when critical failure occurs
         """
+        # Enforce maintenance downtime — override speed before any physics
+        if self.use_maintenance and self._maintenance_until_hours > 0 and self.operating_hours < self._maintenance_until_hours:
+            self.set_speed(0)
+            self.speed_target = 0
+
         # Update speed toward target
         speed_rate = 0.1 if self.speed_target > self.speed else 0.15
         self.speed = self._approach(self.speed, self.speed_target, speed_rate)
@@ -734,36 +740,31 @@ class GasTurbine:
         
         # 11. Check maintenance required if enabled
         if self.use_maintenance:
-            try:
-                maint_type = self.maint_scheduler.check_maintenance_required(
-                    operating_hours=self.operating_hours,
-                    health_state=health_state,
-                    is_planned_shutdown=(self.speed == 0)
-                )
-                
-                if maint_type:
-                    maint_action = self.maint_scheduler.perform_maintenance(
-                        maint_type,
-                        current_health=health_state,
+            if self._maintenance_until_hours > 0 and self.operating_hours < self._maintenance_until_hours:
+                self.set_speed(0)
+            else:
+                self._maintenance_until_hours = 0.0
+                try:
+                    maint_type = self.maint_scheduler.check_maintenance_required(
                         operating_hours=self.operating_hours,
-                        timestamp=self.current_timestamp
+                        health_state=health_state,
+                        is_planned_shutdown=(self.speed == 0)
                     )
-                    # Restore health after maintenance
-                    self.health_model.health = maint_action.health_after
-                    health_state = maint_action.health_after
-            except:
-                pass
+                    if maint_type:
+                        maint_action = self.maint_scheduler.perform_maintenance(
+                            maint_type,
+                            current_health=health_state,
+                            operating_hours=self.operating_hours,
+                            timestamp=self.current_timestamp
+                        )
+                        self.health_model.health = maint_action.health_after
+                        health_state = maint_action.health_after
+                        self._maintenance_until_hours = self.operating_hours + maint_action.duration_hours
+                        self.set_speed(0)
+                except Exception:
+                    pass
         
-        # Update operating hours
-        if self.speed > 0:
-            self.operating_hours += 1/3600  # Assuming 1-second intervals
-            
         self.t += 1
-        if hasattr(self, 'elapsed_hours'):
-            self.elapsed_hours += 1/3600
-        if hasattr(self, 'current_timestamp'):
-            from datetime import timedelta
-            self.current_timestamp += timedelta(seconds=1)
         
         # Build telemetry message
         state = {
