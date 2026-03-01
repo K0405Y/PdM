@@ -18,6 +18,8 @@ equipment_types:
         - initial_health_blade
         - initial_health_bearing
         - initial_health_fuel
+      # DB column → simulator constructor kwarg (non-health, non-name params)
+      constructor_params: {}
 
     telemetry:
       table: telemetry.gas_turbine_telemetry
@@ -101,6 +103,9 @@ equipment_types:
         - design_head_kj_kg
         - initial_health_impeller
         - initial_health_bearing
+      constructor_params:
+        design_flow_m3h: design_flow
+        design_head_kj_kg: design_head
 
     telemetry:
       table: telemetry.compressor_telemetry
@@ -194,6 +199,11 @@ equipment_types:
         - initial_health_seal
         - initial_health_bearing_de
         - initial_health_bearing_nde
+      constructor_params:
+        design_flow_m3h: design_flow
+        design_head_m: design_head
+        design_speed_rpm: design_speed
+        fluid_density_kg_m3: fluid_density
 
     telemetry:
       table: telemetry.pump_telemetry
