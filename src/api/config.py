@@ -1,11 +1,12 @@
 """
-API configuration via environment variables.
+API configuration via environment variables and YAML schema config.
 """
 import sys
 import os
 from functools import lru_cache
 from typing import List
 from pydantic_settings import BaseSettings
+from shared_config import load_table_config  # noqa: F401 — re-exported for API consumers
 
 # Ensure src/ and project root are importable
 _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
