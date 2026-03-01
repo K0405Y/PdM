@@ -213,6 +213,7 @@ def simulate_equipment(equipment, equipment_id: int, equipment_type: str,
     # Track maintenance periods and alarm state
     in_maintenance = False
     maintenance_remaining = 0
+    alarm_cooldown = 0  # Suppress alarm-triggered shutdowns after maintenance
     current_alarm = None  # Tracks which alarm is active (None = no alarm)
     state = {}
 
@@ -224,6 +225,7 @@ def simulate_equipment(equipment, equipment_id: int, equipment_type: str,
             maintenance_remaining -= 1
             if maintenance_remaining <= 0:
                 in_maintenance = False
+                alarm_cooldown = maintenance_samples * 8
                 # Yield maintenance complete record
                 yield {
                     'type': 'maintenance_complete',
@@ -319,13 +321,17 @@ def simulate_equipment(equipment, equipment_id: int, equipment_type: str,
             # Check for bearing/motor process alarms (non-fatal flags from pump model)
             # These fire as state flags, not exceptions, so components keep degrading.
             # On each new alarm onset (or alarm type change), probabilistically shutdown.
+            # Cooldown after maintenance suppresses alarm shutdowns so components can
+            # degrade to health-based failure thresholds (impeller, bearing, cavitation).
+            if alarm_cooldown > 0:
+                alarm_cooldown -= 1
             bearing_alarm = state.get('bearing_alarm') if state else None
             if bearing_alarm:
                 telemetry_record['alarm'] = bearing_alarm
                 if bearing_alarm != current_alarm:
                     # New alarm or alarm type changed — decide whether to shutdown
                     current_alarm = bearing_alarm
-                    if random.random() < 0.12:
+                    if alarm_cooldown == 0 and random.random() < 0.12:
                         yield telemetry_record
                         yield {
                             'type': 'failure',
