@@ -19,26 +19,20 @@ import sys
 import logging
 from typing import List, Dict, Tuple
 from dotenv import load_dotenv
-
-# Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
-
-# Import new modular components
 from src.ingestion.db_setup import Database, MasterData
 from src.ingestion.equipment_sim import simulate_parallel, simulate_sequential
 from src.ingestion.bulk_insert import bulk_insert_telemetry, insert_failures
-
-# Import equipment simulators
 from src.data_simulation.gas_turbine import GasTurbine
 from src.data_simulation.compressor import Compressor
 from src.data_simulation.pump import Pump
-
-# Setup logging
+from shared_config import load_table_config
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
 
 # Load environment variables
 load_dotenv()
@@ -262,69 +256,46 @@ class DataPipeline:
         """Run data integrity verification queries."""
         logger.info("Running data integrity verification")
 
+        cfg = load_table_config()
+
         session = self.db.get_session()
 
         try:
             from sqlalchemy import text
 
-            # Count equipment
-            turbine_count = session.execute(
-                text("SELECT COUNT(*) FROM master_data.gas_turbines WHERE status = 'active'")
-            ).scalar()
+            equipment_counts = {}
+            telemetry_counts = {}
+            failure_counts = {}
 
-            compressor_count = session.execute(
-                text("SELECT COUNT(*) FROM master_data.compressors WHERE status = 'active'")
-            ).scalar()
+            for eq_type, eq_cfg in cfg["equipment_types"].items():
+                equipment_counts[eq_type] = session.execute(
+                    text(f"SELECT COUNT(*) FROM {eq_cfg['master']['table']} WHERE status = 'active'")
+                ).scalar()
 
-            pump_count = session.execute(
-                text("SELECT COUNT(*) FROM master_data.pumps WHERE status = 'active'")
-            ).scalar()
+                telemetry_counts[eq_type] = session.execute(
+                    text(f"SELECT COUNT(*) FROM {eq_cfg['telemetry']['table']}")
+                ).scalar()
 
-            # Count telemetry
-            gt_telemetry = session.execute(
-                text("SELECT COUNT(*) FROM telemetry.gas_turbine_telemetry")
-            ).scalar()
-
-            cc_telemetry = session.execute(
-                text("SELECT COUNT(*) FROM telemetry.compressor_telemetry")
-            ).scalar()
-
-            cp_telemetry = session.execute(
-                text("SELECT COUNT(*) FROM telemetry.pump_telemetry")
-            ).scalar()
-
-            # Count failures
-            gt_failures = session.execute(
-                text("SELECT COUNT(*) FROM failure_events.gas_turbine_failures")
-            ).scalar()
-
-            cc_failures = session.execute(
-                text("SELECT COUNT(*) FROM failure_events.compressor_failures")
-            ).scalar()
-
-            cp_failures = session.execute(
-                text("SELECT COUNT(*) FROM failure_events.pump_failures")
-            ).scalar()
+                failure_counts[eq_type] = session.execute(
+                    text(f"SELECT COUNT(*) FROM {eq_cfg['failures']['table']}")
+                ).scalar()
 
             # Print summary
             logger.info("\n" + "="*60)
             logger.info("DATA INTEGRITY SUMMARY")
             logger.info("="*60)
-            logger.info(f"Equipment:")
-            logger.info(f"  - Turbines: {turbine_count}")
-            logger.info(f"  - Compressors: {compressor_count}")
-            logger.info(f"  - Pumps: {pump_count}")
-            logger.info(f"  - Total: {turbine_count + compressor_count + pump_count}")
-            logger.info(f"\nTelemetry Records:")
-            logger.info(f"  - Turbine: {gt_telemetry:,}")
-            logger.info(f"  - Compressor: {cc_telemetry:,}")
-            logger.info(f"  - Pump: {cp_telemetry:,}")
-            logger.info(f"  - Total: {gt_telemetry + cc_telemetry + cp_telemetry:,}")
-            logger.info(f"\nFailure Events:")
-            logger.info(f"  - Turbine: {gt_failures}")
-            logger.info(f"  - Compressor: {cc_failures}")
-            logger.info(f"  - Pump: {cp_failures}")
-            logger.info(f"  - Total: {gt_failures + cc_failures + cp_failures}")
+            logger.info("Equipment:")
+            for eq_type, count in equipment_counts.items():
+                logger.info(f"  - {eq_type.title()}: {count}")
+            logger.info(f"  - Total: {sum(equipment_counts.values())}")
+            logger.info("\nTelemetry Records:")
+            for eq_type, count in telemetry_counts.items():
+                logger.info(f"  - {eq_type.title()}: {count:,}")
+            logger.info(f"  - Total: {sum(telemetry_counts.values()):,}")
+            logger.info("\nFailure Events:")
+            for eq_type, count in failure_counts.items():
+                logger.info(f"  - {eq_type.title()}: {count}")
+            logger.info(f"  - Total: {sum(failure_counts.values())}")
             logger.info("="*60)
 
         finally:
