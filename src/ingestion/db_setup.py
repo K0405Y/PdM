@@ -13,6 +13,7 @@ from typing import List, Dict
 from datetime import datetime, timedelta
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
+from shared_config import load_table_config
 
 logger = logging.getLogger(__name__)
 
@@ -77,75 +78,65 @@ class MasterData:
     def __init__(self, db: Database):
         self.db = db
 
-    def get_existing_turbines(self) -> List[int]:
-        """Get IDs of existing active turbines."""
+    def _get_existing_equipment(self, equipment_type: str) -> List[int]:
+        """Get IDs of existing active equipment by type."""
+        cfg = load_table_config()
+        mcfg = cfg["equipment_types"][equipment_type]["master"]
+        table, id_col = mcfg["table"], mcfg["id_column"]
         session = self.db.get_session()
         try:
-            result = session.execute(text("""
-                SELECT turbine_id FROM master_data.gas_turbines
-                WHERE status = 'active'
-                ORDER BY turbine_id
-            """))
+            result = session.execute(text(
+                f"SELECT {id_col} FROM {table} WHERE status = 'active' ORDER BY {id_col}"
+            ))
             return [row[0] for row in result]
         finally:
             session.close()
+
+    def get_existing_turbines(self) -> List[int]:
+        """Get IDs of existing active turbines."""
+        return self._get_existing_equipment("turbine")
 
     def get_existing_compressors(self) -> List[int]:
         """Get IDs of existing active compressors."""
-        session = self.db.get_session()
-        try:
-            result = session.execute(text("""
-                SELECT compressor_id FROM master_data.compressors
-                WHERE status = 'active'
-                ORDER BY compressor_id
-            """))
-            return [row[0] for row in result]
-        finally:
-            session.close()
+        return self._get_existing_equipment("compressor")
 
     def get_existing_pumps(self) -> List[int]:
         """Get IDs of existing active pumps."""
-        session = self.db.get_session()
-        try:
-            result = session.execute(text("""
-                SELECT pump_id FROM master_data.pumps
-                WHERE status = 'active'
-                ORDER BY pump_id
-            """))
-            return [row[0] for row in result]
-        finally:
-            session.close()
+        return self._get_existing_equipment("pump")
 
     def seed_turbines(self, count: int) -> List[int]:
         """Create gas turbine records"""
+        cfg = load_table_config()
+        mcfg = cfg["equipment_types"]["turbine"]["master"]
+        table, id_col = mcfg["table"], mcfg["id_column"]
+        cols = mcfg["insert_columns"]
+        col_list = ", ".join(cols)
+        placeholders = ", ".join(f":{c}" for c in cols)
+
         ids = []
         session = self.db.get_session()
 
         try:
             for i in range(count):
                 name = f"GT-{1 + i}"
-                result = session.execute(text("""
-                    INSERT INTO master_data.gas_turbines
-                    (name, serial_number, location, installed_date,
-                     initial_health_hgp, initial_health_blade,
-                     initial_health_bearing, initial_health_fuel)
-                    VALUES (:name, :sn, :loc, :date, :hgp, :blade, :bearing, :fuel)
-                    ON CONFLICT (name) DO NOTHING
-                    RETURNING turbine_id
-                """), {
+                values = {
                     'name': name,
-                    'sn': f"SN-GT-{1 + i}",
-                    'loc': f"Platform-{i % 3 + 1}",
-                    'date': datetime(2024, 1, 1).date() + timedelta(days=random.randint(0, 364)),
-                    'hgp': random.uniform(0.70, 0.98),
-                    'blade': random.uniform(0.70, 0.98),
-                    'bearing': random.uniform(0.70, 0.98),
-                    'fuel': random.uniform(0.70, 0.98)
-                })
+                    'serial_number': f"SN-GT-{1 + i}",
+                    'location': f"Platform-{i % 3 + 1}",
+                    'installed_date': datetime(2024, 1, 1).date() + timedelta(days=random.randint(0, 364)),
+                    'initial_health_hgp': random.uniform(0.70, 0.98),
+                    'initial_health_blade': random.uniform(0.70, 0.98),
+                    'initial_health_bearing': random.uniform(0.70, 0.98),
+                    'initial_health_fuel': random.uniform(0.70, 0.98),
+                }
+                result = session.execute(text(
+                    f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
+                    f"ON CONFLICT (name) DO NOTHING RETURNING {id_col}"
+                ), values)
                 tid = result.scalar()
                 if tid is None:
                     tid = session.execute(text(
-                        "SELECT turbine_id FROM master_data.gas_turbines WHERE name = :name"
+                        f"SELECT {id_col} FROM {table} WHERE name = :name"
                     ), {'name': name}).scalar()
                 ids.append(tid)
 
@@ -161,34 +152,37 @@ class MasterData:
 
     def seed_compressors(self, count: int) -> List[int]:
         """Create compressor records"""
+        cfg = load_table_config()
+        mcfg = cfg["equipment_types"]["compressor"]["master"]
+        table, id_col = mcfg["table"], mcfg["id_column"]
+        cols = mcfg["insert_columns"]
+        col_list = ", ".join(cols)
+        placeholders = ", ".join(f":{c}" for c in cols)
+
         ids = []
         session = self.db.get_session()
 
         try:
             for i in range(count):
                 name = f"COMP-{1 + i}"
-                result = session.execute(text("""
-                    INSERT INTO master_data.compressors
-                    (name, serial_number, location, installed_date,
-                     design_flow_m3h, design_head_kj_kg,
-                     initial_health_impeller, initial_health_bearing)
-                    VALUES (:name, :sn, :loc, :date, :flow, :head, :imp, :bear)
-                    ON CONFLICT (name) DO NOTHING
-                    RETURNING compressor_id
-                """), {
+                values = {
                     'name': name,
-                    'sn': f"SN-COMP-{1 + i}",
-                    'loc': f"Facility-{i % 4 + 1}",
-                    'date': datetime(2024, 1, 1).date() + timedelta(days=random.randint(0, 364)),
-                    'flow': random.uniform(1200, 1800),
-                    'head': random.uniform(7500, 8500),
-                    'imp': random.uniform(0.88, 0.98),
-                    'bear': random.uniform(0.85, 0.98)
-                })
+                    'serial_number': f"SN-COMP-{1 + i}",
+                    'location': f"Facility-{i % 4 + 1}",
+                    'installed_date': datetime(2024, 1, 1).date() + timedelta(days=random.randint(0, 364)),
+                    'design_flow_m3h': random.uniform(1200, 1800),
+                    'design_head_kj_kg': random.uniform(7500, 8500),
+                    'initial_health_impeller': random.uniform(0.88, 0.98),
+                    'initial_health_bearing': random.uniform(0.85, 0.98),
+                }
+                result = session.execute(text(
+                    f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
+                    f"ON CONFLICT (name) DO NOTHING RETURNING {id_col}"
+                ), values)
                 cid = result.scalar()
                 if cid is None:
                     cid = session.execute(text(
-                        "SELECT compressor_id FROM master_data.compressors WHERE name = :name"
+                        f"SELECT {id_col} FROM {table} WHERE name = :name"
                     ), {'name': name}).scalar()
                 ids.append(cid)
 
@@ -204,6 +198,15 @@ class MasterData:
 
     def seed_pumps(self, count: int) -> List[int]:
         """Create pump records"""
+        cfg = load_table_config()
+        mcfg = cfg["equipment_types"]["pump"]["master"]
+        table, id_col = mcfg["table"], mcfg["id_column"]
+        # npsh_available_m is in insert_columns but not provided by seed logic;
+        # filter to only columns we supply values for
+        seed_cols = [c for c in mcfg["insert_columns"] if c != "npsh_available_m"]
+        col_list = ", ".join(seed_cols)
+        placeholders = ", ".join(f":{c}" for c in seed_cols)
+
         ids = []
         services = [
             {'name': 'Crude Booster', 'flow': 200, 'head': 100, 'density': 850},
@@ -219,35 +222,29 @@ class MasterData:
             for i in range(count):
                 service = services[i % len(services)]
                 name = f"PUMP-{1 + i}"
-                result = session.execute(text("""
-                    INSERT INTO master_data.pumps
-                    (name, serial_number, service_type, location, installed_date,
-                     design_flow_m3h, design_head_m, design_speed_rpm, fluid_density_kg_m3,
-                     initial_health_impeller, initial_health_seal,
-                     initial_health_bearing_de, initial_health_bearing_nde)
-                    VALUES (:name, :sn, :svc, :loc, :date, :flow, :head, :speed, :dens,
-                            :imp, :seal, :bde, :bnde)
-                    ON CONFLICT (name) DO NOTHING
-                    RETURNING pump_id
-                """), {
+                values = {
                     'name': name,
-                    'sn': f"SN-PUMP-{1 + i}",
-                    'svc': service['name'],
-                    'loc': f"Platform-{i % 5 + 1}",
-                    'date': datetime(2024, 1, 1).date() + timedelta(days=random.randint(0, 364)),
-                    'flow': service['flow'],
-                    'head': service['head'],
-                    'speed': 3000,
-                    'dens': service['density'],
-                    'imp': random.uniform(0.70, 0.98),
-                    'seal': random.uniform(0.70, 0.98),
-                    'bde': random.uniform(0.70, 0.98),
-                    'bnde': random.uniform(0.70, 0.98)
-                })
+                    'serial_number': f"SN-PUMP-{1 + i}",
+                    'service_type': service['name'],
+                    'location': f"Platform-{i % 5 + 1}",
+                    'installed_date': datetime(2024, 1, 1).date() + timedelta(days=random.randint(0, 364)),
+                    'design_flow_m3h': service['flow'],
+                    'design_head_m': service['head'],
+                    'design_speed_rpm': 3000,
+                    'fluid_density_kg_m3': service['density'],
+                    'initial_health_impeller': random.uniform(0.70, 0.98),
+                    'initial_health_seal': random.uniform(0.70, 0.98),
+                    'initial_health_bearing_de': random.uniform(0.70, 0.98),
+                    'initial_health_bearing_nde': random.uniform(0.70, 0.98),
+                }
+                result = session.execute(text(
+                    f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
+                    f"ON CONFLICT (name) DO NOTHING RETURNING {id_col}"
+                ), values)
                 pid = result.scalar()
                 if pid is None:
                     pid = session.execute(text(
-                        "SELECT pump_id FROM master_data.pumps WHERE name = :name"
+                        f"SELECT {id_col} FROM {table} WHERE name = :name"
                     ), {'name': name}).scalar()
                 ids.append(pid)
 
@@ -263,13 +260,9 @@ class MasterData:
 
     def get_configs(self, equipment_ids: List[int], equipment_type: str) -> List[Dict]:
         """Fetch equipment configurations from database."""
-        tables = {
-            'turbine': ('master_data.gas_turbines', 'turbine_id'),
-            'compressor': ('master_data.compressors', 'compressor_id'),
-            'pump': ('master_data.pumps', 'pump_id')
-        }
-
-        table, id_col = tables[equipment_type]
+        cfg = load_table_config()
+        mcfg = cfg["equipment_types"][equipment_type]["master"]
+        table, id_col = mcfg["table"], mcfg["id_column"]
         session = self.db.get_session()
 
         try:
