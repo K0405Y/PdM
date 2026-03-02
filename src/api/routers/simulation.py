@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field, model_validator
 from api.dependencies import get_db, get_master_data
-from api.config import get_settings
+from api.config import get_settings, load_table_config
 from ingestion.db_setup import Database, MasterData
 from ingestion.equipment_sim import simulate_equipment as sim_equip
 from ingestion.bulk_insert import bulk_insert_telemetry, insert_failures, insert_maintenance
@@ -22,7 +22,6 @@ from data_simulation.physics.weather_api_client import (
 from data_simulation.physics.environmental_conditions import (
     EnvironmentalConditions, LocationType
 )
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -135,13 +134,16 @@ def trigger_simulation(
     Returns a job_id to poll for status via GET /{job_id}/status.
     If auto_ingest is true, simulation output is bulk-inserted into the database.
     """
-    if request.equipment_type not in ("turbine", "compressor", "pump"):
+    yaml_cfg = load_table_config()
+    if request.equipment_type not in yaml_cfg["equipment_types"]:
         raise HTTPException(400, f"Unknown equipment type: {request.equipment_type}")
 
     # Validate equipment IDs exist
     configs = master.get_configs(request.equipment_ids, request.equipment_type)
     if len(configs) != len(request.equipment_ids):
-        found_ids = {c.get(f"{request.equipment_type}_id") or c.get("turbine_id") or c.get("compressor_id") or c.get("pump_id") for c in configs}
+        yaml_cfg = load_table_config()
+        id_col = yaml_cfg["equipment_types"][request.equipment_type]["master"]["id_column"]
+        found_ids = {c.get(id_col) for c in configs}
         missing = set(request.equipment_ids) - found_ids
         raise HTTPException(404, f"Equipment IDs not found: {missing}")
 
@@ -156,43 +158,29 @@ def trigger_simulation(
     }
 
     def _build_constructor_kwargs(eq_type: str, config: dict) -> dict:
-        """Map DB config rows to equipment constructor parameters."""
-        if eq_type == "turbine":
-            return {
-                "name": config.get("name", ""),
-                "initial_health": {
-                    "hgp": config.get("initial_health_hgp", 0.92),
-                    "blade": config.get("initial_health_blade", 0.95),
-                    "bearing": config.get("initial_health_bearing", 0.90),
-                    "fuel": config.get("initial_health_fuel", 0.93),
-                },
-            }
-        elif eq_type == "compressor":
-            return {
-                "name": config.get("name", ""),
-                "design_flow": config.get("design_flow_m3h", 1500.0),
-                "design_head": config.get("design_head_kj_kg", 8000.0),
-                "initial_health": {
-                    "impeller": config.get("initial_health_impeller", 0.92),
-                    "bearing": config.get("initial_health_bearing", 0.88),
-                },
-            }
-        elif eq_type == "pump":
-            return {
-                "name": config.get("name", ""),
-                "design_flow": config.get("design_flow_m3h", 150.0),
-                "design_head": config.get("design_head_m", 80.0),
-                "design_speed": config.get("design_speed_rpm", 3000),
-                "fluid_density": config.get("fluid_density_kg_m3", 850.0),
-                "initial_health": {
-                    "impeller": config.get("initial_health_impeller", 0.94),
-                    "seal": config.get("initial_health_seal", 0.93),
-                    "bearing_de": config.get("initial_health_bearing_de", 0.90),
-                    "bearing_nde": config.get("initial_health_bearing_nde", 0.92),
-                },
-            }
-        else:
-            raise ValueError(f"Unknown equipment type: {eq_type}")
+        """Map DB config rows to equipment constructor parameters.
+
+        Infers initial_health keys from insert_columns with 'initial_health_'
+        prefix, and maps design params via constructor_params in the YAML config.
+        """
+        mcfg = yaml_cfg["equipment_types"][eq_type]["master"]
+        kwargs = {"name": config.get("name", "")}
+
+        # Design/operational params from constructor_params mapping
+        for db_col, ctor_param in mcfg.get("constructor_params", {}).items():
+            if db_col in config:
+                kwargs[ctor_param] = config[db_col]
+
+        # Build initial_health dict from insert_columns with "initial_health_" prefix
+        health = {}
+        for col in mcfg["insert_columns"]:
+            if col.startswith("initial_health_"):
+                key = col[len("initial_health_"):]
+                health[key] = config.get(col, 0.9)
+        if health:
+            kwargs["initial_health"] = health
+
+        return kwargs
 
     def _run_simulation():
         equipment_classes = {
@@ -240,8 +228,9 @@ def trigger_simulation(
                 EquipmentClass = equipment_classes[eq_type]
 
                 # Determine equipment ID from config
-                id_keys = {"turbine": "turbine_id", "compressor": "compressor_id", "pump": "pump_id"}
-                eq_id = config[id_keys[eq_type]]
+                yaml_cfg = load_table_config()
+                id_col = yaml_cfg["equipment_types"][eq_type]["master"]["id_column"]
+                eq_id = config[id_col]
                 logger.info(
                     "Simulating %s %d/%d (ID=%s)",
                     eq_type, idx, len(configs), eq_id,
