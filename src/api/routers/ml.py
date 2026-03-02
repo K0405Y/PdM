@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from api.dependencies import get_db_session
+from api.config import load_table_config
 from api.utils import TABLE_CONFIG, classify_operating_state, validate_equipment_exists
 from api.schemas.telemetry import EquipmentTypeEnum, OperatingState
 from api.schemas.ml import (
@@ -118,8 +119,7 @@ def export_training_data(
 
         # Strip derived features if not requested
         if not include_derived_features:
-            for feat in ["vibration_trend_7d", "temp_variation_24h", "speed_stability",
-                         "efficiency_degradation_rate", "pressure_ratio", "load_factor"]:
+            for feat in load_table_config()["derived_columns"]:
                 d.pop(feat, None)
 
         items.append(d)
