@@ -4,9 +4,9 @@ API configuration via environment variables and YAML schema config.
 import sys
 import os
 from functools import lru_cache
-from typing import List
+from typing import Any, Dict, List
+import yaml
 from pydantic_settings import BaseSettings
-from shared_config import load_table_config  # noqa: F401 — re-exported for API consumers
 
 # Ensure src/ and project root are importable
 _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -33,3 +33,10 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+@lru_cache
+def load_table_config() -> Dict[str, Any]:
+    """Load database schema and equipment metadata from table_config.yaml."""
+    config_path = os.path.join(_project_root, "table_config.yaml")
+    with open(config_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
