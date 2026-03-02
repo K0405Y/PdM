@@ -1,11 +1,12 @@
 """
 Shared utilities for the API layer.
-Pagination helpers, row conversion, operating state classification.
+Pagination helpers, row conversion, operating state classification
 """
 from typing import Any, Dict, List, Optional, Tuple
 from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from api.config import load_table_config
 
 # Operating state classification
 def classify_operating_state(
@@ -78,12 +79,41 @@ def build_offset_query(
 
 
 
+def _build_master_tables() -> Dict[str, tuple]:
+    """Build MASTER_TABLES mapping from YAML config."""
+    cfg = load_table_config()
+    return {
+        eq_type: (eq_cfg["master"]["table"], eq_cfg["master"]["id_column"])
+        for eq_type, eq_cfg in cfg["equipment_types"].items()
+    }
+
+
+def _build_table_config() -> Dict[str, Dict[str, Any]]:
+    """Build TABLE_CONFIG mapping from YAML config.
+
+    Preserves the same dict key names used by all routers so downstream
+    code requires no structural changes.
+    """
+    cfg = load_table_config()
+    result = {}
+    for eq_type, eq_cfg in cfg["equipment_types"].items():
+        result[eq_type] = {
+            "telemetry_table": eq_cfg["telemetry"]["table"],
+            "telemetry_id_col": eq_cfg["telemetry"]["id_column"],
+            "id_col": eq_cfg["telemetry"]["equipment_id_column"],
+            "failure_table": eq_cfg["failures"]["table"],
+            "failure_id_col": eq_cfg["failures"]["equipment_id_column"],
+            "maintenance_table": eq_cfg["maintenance"]["table"],
+            "maintenance_id_col": eq_cfg["maintenance"]["equipment_id_column"],
+            "health_cols": list(eq_cfg["telemetry"]["health_columns"]),
+            "key_numeric_cols": list(eq_cfg["telemetry"]["key_numeric_columns"]),
+        }
+    return result
+
+
 # Equipment existence check
-MASTER_TABLES = {
-    "turbine": ("master_data.gas_turbines", "turbine_id"),
-    "compressor": ("master_data.compressors", "compressor_id"),
-    "pump": ("master_data.pumps", "pump_id"),
-}
+MASTER_TABLES = _build_master_tables()
+
 
 
 def validate_equipment_exists(
@@ -106,48 +136,5 @@ def validate_equipment_exists(
         )
 
 
-# Telemetry table config 
-TABLE_CONFIG = {
-    "turbine": {
-        "telemetry_table": "telemetry.gas_turbine_telemetry",
-        "telemetry_id_col": "telemetry_id",
-        "id_col": "turbine_id",
-        "failure_table": "failure_events.gas_turbine_failures",
-        "failure_id_col": "turbine_id",
-        "maintenance_table": "maintenance_events.gas_turbine_maintenance",
-        "maintenance_id_col": "turbine_id",
-        "health_cols": ["health_hgp", "health_blade", "health_bearing", "health_fuel"],
-        "key_numeric_cols": [
-            "speed_rpm", "egt_celsius", "vibration_rms_mm_s",
-            "efficiency_fraction", "fuel_flow_kg_s",
-        ],
-    },
-    "compressor": {
-        "telemetry_table": "telemetry.compressor_telemetry",
-        "telemetry_id_col": "telemetry_id",
-        "id_col": "compressor_id",
-        "failure_table": "failure_events.compressor_failures",
-        "failure_id_col": "compressor_id",
-        "maintenance_table": "maintenance_events.compressor_maintenance",
-        "maintenance_id_col": "compressor_id",
-        "health_cols": ["health_impeller", "health_bearing"],
-        "key_numeric_cols": [
-            "speed_rpm", "flow_m3h", "surge_margin_percent",
-            "efficiency_fraction", "orbit_amplitude_mm",
-        ],
-    },
-    "pump": {
-        "telemetry_table": "telemetry.pump_telemetry",
-        "telemetry_id_col": "telemetry_id",
-        "id_col": "pump_id",
-        "failure_table": "failure_events.pump_failures",
-        "failure_id_col": "pump_id",
-        "maintenance_table": "maintenance_events.pump_maintenance",
-        "maintenance_id_col": "pump_id",
-        "health_cols": ["health_impeller", "health_seal", "health_bearing_de", "health_bearing_nde"],
-        "key_numeric_cols": [
-            "speed_rpm", "flow_m3h", "vibration_rms_mm_s",
-            "efficiency_fraction", "cavitation_margin_m",
-        ],
-    },
-}
+# Telemetry table config (built from YAML)
+TABLE_CONFIG = _build_table_config()
