@@ -14,6 +14,7 @@ from datetime import timedelta
 from io import StringIO
 from typing import List, Dict, Set
 from sqlalchemy import text
+from shared_config import load_table_config
 
 logger = logging.getLogger(__name__)
 # Try to import numpy for type conversion
@@ -23,130 +24,30 @@ try:
 except ImportError:
     HAS_NUMPY = False
 
-# Column mappings: state_key -> database_column
-# Aligned with DB schema (03_create_telemetry_tables.sql) and simulator next_state() outputs
 
-TURBINE_COLUMNS = {
-    'equipment_id': 'turbine_id',
-    'sample_time': 'sample_time',
-    'operating_hours': 'operating_hours',
-    'speed': 'speed_rpm',
-    'speed_target': 'speed_target_rpm',
-    'exhaust_gas_temp': 'egt_celsius',
-    'oil_temp': 'oil_temp_celsius',
-    'fuel_flow': 'fuel_flow_kg_s',
-    'compressor_discharge_temp': 'compressor_discharge_temp_celsius',
-    'compressor_discharge_pressure': 'compressor_discharge_pressure_kpa',
-    'efficiency': 'efficiency_fraction',
-    'ambient_temp': 'ambient_temp_celsius',
-    'ambient_pressure': 'ambient_pressure_kpa',
-    'vibration_rms': 'vibration_rms_mm_s',
-    'vibration_peak': 'vibration_peak_mm_s',
-    'vibration_crest_factor': 'vibration_crest_factor',
-    'vibration_kurtosis': 'vibration_kurtosis',
-    'health_hgp': 'health_hgp',
-    'health_blade': 'health_blade',
-    'health_bearing': 'health_bearing',
-    'health_fuel': 'health_fuel',
-    'num_active_faults': 'num_active_faults',
-    'total_faults_initiated': 'total_faults_initiated',
-    'upset_active': 'upset_active',
-    'upset_type': 'upset_type',
-    'upset_severity': 'upset_severity',
-    # Derived features (extracted from JSON 'features' field)
-    'vibration_trend_7d': 'vibration_trend_7d',
-    'temp_variation_24h': 'temp_variation_24h',
-    'speed_stability': 'speed_stability',
-    'efficiency_degradation_rate': 'efficiency_degradation_rate',
-    'load_factor': 'load_factor',
-}
+def _build_column_mappings() -> Dict[str, dict]:
+    """Build column mapping dicts from YAML config for each equipment type."""
+    cfg = load_table_config()
+    return {
+        eq_type: eq_cfg["telemetry"]["column_mappings"]
+        for eq_type, eq_cfg in cfg["equipment_types"].items()
+    }
 
-COMPRESSOR_COLUMNS = {
-    'equipment_id': 'compressor_id',
-    'sample_time': 'sample_time',
-    'operating_hours': 'operating_hours',
-    'speed': 'speed_rpm',
-    'speed_target': 'speed_target_rpm',
-    'flow': 'flow_m3h',
-    'head': 'head_kj_kg',
-    'efficiency': 'efficiency_fraction',
-    'power': 'power_kw',
-    'suction_pressure': 'suction_pressure_kpa',
-    'suction_temp': 'suction_temp_celsius',
-    'discharge_pressure': 'discharge_pressure_kpa',
-    'discharge_temp': 'discharge_temp_celsius',
-    'surge_margin': 'surge_margin_percent',
-    'surge_alarm': 'surge_alarm',
-    'orbit_amplitude': 'vibration_amplitude_mm',
-    'sync_amplitude': 'sync_amplitude_mm',
-    'shaft_x_displacement': 'shaft_x_displacement_mm',
-    'shaft_y_displacement': 'shaft_y_displacement_mm',
-    'bearing_temp_de': 'bearing_temp_de_celsius',
-    'bearing_temp_nde': 'bearing_temp_nde_celsius',
-    'thrust_bearing_temp': 'thrust_bearing_temp_celsius',
-    'health_seal_primary': 'seal_health_primary',
-    'health_seal_secondary': 'seal_health_secondary',
-    'primary_seal_leakage': 'primary_seal_leakage_kg_s',
-    'secondary_seal_leakage': 'secondary_seal_leakage_kg_s',
-    'health_impeller': 'health_impeller',
-    'health_bearing': 'health_bearing',
-    'num_active_faults': 'num_active_faults',
-    'total_faults_initiated': 'total_faults_initiated',
-    'upset_active': 'upset_active',
-    'upset_type': 'upset_type',
-    'upset_severity': 'upset_severity',
-    # Derived features (extracted from JSON 'features' field)
-    'vibration_trend_7d': 'vibration_trend_7d',
-    'temp_variation_24h': 'temp_variation_24h',
-    'speed_stability': 'speed_stability',
-    'efficiency_degradation_rate': 'efficiency_degradation_rate',
-    'pressure_ratio': 'pressure_ratio',
-    'load_factor': 'load_factor',
-}
 
-PUMP_COLUMNS = {
-    'equipment_id': 'pump_id',
-    'sample_time': 'sample_time',
-    'operating_hours': 'operating_hours',
-    'speed': 'speed_rpm',
-    'speed_target': 'speed_target_rpm',
-    'flow': 'flow_m3h',
-    'head': 'head_m',
-    'efficiency': 'efficiency_fraction',
-    'power': 'power_kw',
-    'suction_pressure': 'suction_pressure_kpa',
-    'discharge_pressure': 'discharge_pressure_kpa',
-    'fluid_temp': 'fluid_temp_celsius',
-    'npsh_available': 'npsh_available_m',
-    'npsh_required': 'npsh_required_m',
-    'npsh_margin': 'cavitation_margin_m',
-    'cavitation_severity': 'cavitation_severity',
-    'vibration_rms': 'vibration_rms_mm_s',
-    'vibration_peak': 'vibration_peak_mm_s',
-    'bearing_temp_de': 'bearing_temp_de_celsius',
-    'bearing_temp_nde': 'bearing_temp_nde_celsius',
-    'motor_current': 'motor_current_amps',
-    'motor_current_ratio': 'motor_current_ratio',
-    'seal_leakage': 'seal_leakage_rate',
-    'bep_deviation': 'bep_deviation_percent',
-    'health_impeller': 'health_impeller',
-    'health_seal': 'health_seal',
-    'health_bearing_de': 'health_bearing_de',
-    'health_bearing_nde': 'health_bearing_nde',
-    # Derived features (extracted from JSON 'features' field)
-    'temp_variation_24h': 'temp_variation_24h',
-    'vibration_trend_7d': 'vibration_trend_7d',
-    'speed_stability': 'speed_stability',
-    'efficiency_degradation_rate': 'efficiency_degradation_rate',
-    'pressure_ratio': 'pressure_ratio',
-    'load_factor': 'load_factor',
-}
+def _build_derived_feature_keys() -> Set[str]:
+    """Build the set of derived feature keys from YAML config."""
+    cfg = load_table_config()
+    return set(cfg["derived_columns"]) - {"operating_state"}
+
+
+# Column mappings: state_key -> database_column (loaded from YAML)
+_COLUMN_MAPPINGS = _build_column_mappings()
+TURBINE_COLUMNS = _COLUMN_MAPPINGS["turbine"]
+COMPRESSOR_COLUMNS = _COLUMN_MAPPINGS["compressor"]
+PUMP_COLUMNS = _COLUMN_MAPPINGS["pump"]
 
 # Keys that come from the JSON 'features' field rather than directly from state
-DERIVED_FEATURE_KEYS: Set[str] = {
-    'vibration_trend_7d', 'temp_variation_24h', 'speed_stability',
-    'efficiency_degradation_rate', 'pressure_ratio', 'load_factor',
-}
+DERIVED_FEATURE_KEYS: Set[str] = _build_derived_feature_keys()
 
 # Record-level keys (not from state dict)
 _RECORD_KEYS = {'equipment_id', 'sample_time', 'operating_hours'}
@@ -202,14 +103,11 @@ def bulk_insert_telemetry(db, records: List[Dict], equipment_type: str) -> int:
     if not records:
         return 0
 
-    # Get configuration for equipment type
-    config = {
-        'turbine': (TURBINE_COLUMNS, 'gas_turbine_telemetry'),
-        'compressor': (COMPRESSOR_COLUMNS, 'compressor_telemetry'),
-        'pump': (PUMP_COLUMNS, 'pump_telemetry')
-    }
-
-    columns_map, table = config[equipment_type]
+    # Get configuration for equipment type from YAML
+    cfg = load_table_config()
+    eq_cfg = cfg["equipment_types"][equipment_type]
+    columns_map = eq_cfg["telemetry"]["column_mappings"]
+    table = eq_cfg["telemetry"]["table"]
     defaults = {}  # Missing values become NULL via \\N
 
     # Build CSV buffer for COPY command
@@ -255,55 +153,34 @@ def insert_failures(db, failures: List[Dict]) -> int:
 
     logger.info(f"Inserting {len(failures)} failure events")
 
-    failure_config = {
-        'turbine': {
-            'table': 'failure_events.gas_turbine_failures',
-            'id_col': 'turbine_id',
-            'columns': ['failure_time', 'operating_hours_at_failure', 'failure_mode_code',
-                       'speed_rpm_at_failure', 'egt_celsius_at_failure', 'vibration_mm_s_at_failure']
-        },
-        'compressor': {
-            'table': 'failure_events.compressor_failures',
-            'id_col': 'compressor_id',
-            'columns': ['failure_time', 'operating_hours_at_failure', 'failure_mode_code',
-                       'speed_rpm_at_failure', 'surge_margin_at_failure', 'vibration_amplitude_at_failure']
-        },
-        'pump': {
-            'table': 'failure_events.pump_failures',
-            'id_col': 'pump_id',
-            'columns': ['failure_time', 'operating_hours_at_failure', 'failure_mode_code',
-                       'speed_rpm_at_failure', 'vibration_mm_s_at_failure', 'cavitation_margin_at_failure']
-        }
-    }
+    yaml_cfg = load_table_config()
 
     session = db.get_session()
     try:
         for record in failures:
             eq_type = record['equipment_type']
-            config = failure_config[eq_type]
+            fcfg = yaml_cfg["equipment_types"][eq_type]["failures"]
             state = record.get('state', {})
 
-            all_cols = [config['id_col']] + config['columns']
-            placeholders = ', '.join([f':val{i}' for i in range(len(all_cols))])
-            sql = f"INSERT INTO {config['table']} ({', '.join(all_cols)}) VALUES ({placeholders})"
+            id_col = fcfg["equipment_id_column"]
+            insert_cols = fcfg["insert_columns"]
+            state_mappings = fcfg["state_key_mappings"]
 
+            all_cols = [id_col] + insert_cols
+            placeholders = ', '.join([f':val{i}' for i in range(len(all_cols))])
+            sql = f"INSERT INTO {fcfg['table']} ({', '.join(all_cols)}) VALUES ({placeholders})"
+
+            # Common values: equipment_id, failure_time, operating_hours, failure_mode_code
             values = {
                 'val0': _clean(record['equipment_id']),
                 'val1': record['failure_time'],
                 'val2': _clean(record['operating_hours_at_failure']),
                 'val3': record['failure_mode_code'],
-                'val4': _clean(state.get('speed', 0))
             }
 
-            if eq_type == 'turbine':
-                values['val5'] = _clean(state.get('exhaust_gas_temp', 0))
-                values['val6'] = _clean(state.get('vibration_rms', 0))
-            elif eq_type == 'compressor':
-                values['val5'] = _clean(state.get('surge_margin', 0))
-                values['val6'] = _clean(state.get('orbit_amplitude', 0))
-            elif eq_type == 'pump':
-                values['val5'] = _clean(state.get('vibration_rms', 0))
-                values['val6'] = _clean(state.get('npsh_margin', 0))
+            # Equipment-specific state snapshot columns
+            for idx, mapping in enumerate(state_mappings):
+                values[f'val{4 + idx}'] = _clean(state.get(mapping['state_key'], 0))
 
             session.execute(text(sql), values)
 
@@ -330,32 +207,18 @@ def insert_maintenance(db, maintenance_records: List[Dict]) -> int:
 
     logger.info(f"Inserting {len(maintenance_records)} maintenance events")
 
-    maintenance_config = {
-        'turbine': {
-            'table': 'maintenance_events.gas_turbine_maintenance',
-            'id_col': 'turbine_id',
-        },
-        'compressor': {
-            'table': 'maintenance_events.compressor_maintenance',
-            'id_col': 'compressor_id',
-        },
-        'pump': {
-            'table': 'maintenance_events.pump_maintenance',
-            'id_col': 'pump_id',
-        }
-    }
-
-    columns = ['start_time', 'end_time', 'failure_code', 'downtime_hours', 'repaired_components']
+    yaml_cfg = load_table_config()
+    columns = yaml_cfg["maintenance_insert_columns"]
 
     session = db.get_session()
     try:
         for record in maintenance_records:
             eq_type = record['equipment_type']
-            config = maintenance_config[eq_type]
+            mcfg = yaml_cfg["equipment_types"][eq_type]["maintenance"]
 
-            all_cols = [config['id_col']] + columns
+            all_cols = [mcfg['equipment_id_column']] + columns
             placeholders = ', '.join([f':val{i}' for i in range(len(all_cols))])
-            sql = f"INSERT INTO {config['table']} ({', '.join(all_cols)}) VALUES ({placeholders})"
+            sql = f"INSERT INTO {mcfg['table']} ({', '.join(all_cols)}) VALUES ({placeholders})"
 
             start_time = record['start_time']
             downtime_hours = _clean(record['downtime_hours'])
