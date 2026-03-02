@@ -10,11 +10,18 @@ Fast database insertion using PostgreSQL COPY command:
 import csv
 import json
 import logging
+import os
 from datetime import timedelta
 from io import StringIO
 from typing import List, Dict, Set
+import yaml
 from sqlalchemy import text
-from shared_config import load_table_config
+
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+
+def load_table_config():
+    with open(os.path.join(_PROJECT_ROOT, "table_config.yaml"), encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
 logger = logging.getLogger(__name__)
 # Try to import numpy for type conversion

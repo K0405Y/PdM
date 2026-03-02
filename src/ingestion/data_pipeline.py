@@ -18,6 +18,7 @@ import os
 import sys
 import logging
 from typing import List, Dict, Tuple
+import yaml
 from dotenv import load_dotenv
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from src.ingestion.db_setup import Database, MasterData
@@ -26,7 +27,12 @@ from src.ingestion.bulk_insert import bulk_insert_telemetry, insert_failures
 from src.data_simulation.gas_turbine import GasTurbine
 from src.data_simulation.compressor import Compressor
 from src.data_simulation.pump import Pump
-from shared_config import load_table_config
+
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+
+def load_table_config():
+    with open(os.path.join(_PROJECT_ROOT, "table_config.yaml"), encoding="utf-8") as f:
+        return yaml.safe_load(f)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'

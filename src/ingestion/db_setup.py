@@ -7,13 +7,20 @@ Simple database operations:
 - Seed equipment master data
 - Fetch equipment configurations
 """
+import os
 import random
 import logging
 from typing import List, Dict
 from datetime import datetime, timedelta
+import yaml
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
-from shared_config import load_table_config
+
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+
+def load_table_config():
+    with open(os.path.join(_PROJECT_ROOT, "table_config.yaml"), encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
 logger = logging.getLogger(__name__)
 
