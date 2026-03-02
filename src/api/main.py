@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
-from api.config import get_settings
+from api.config import get_settings, load_table_config
 from api.dependencies import init_database, shutdown_database, get_db
 from api.routers import master_data, weather, telemetry, ml, simulation
 from api.utils import TABLE_CONFIG
@@ -72,22 +72,15 @@ def get_schema_contract(equipment_type: str):
         from fastapi import HTTPException
         raise HTTPException(404, f"Unknown equipment type: {equipment_type}")
 
+    yaml_cfg = load_table_config()
     config = TABLE_CONFIG[equipment_type]
     stable_cols = (
-        ["telemetry_id", "sample_time", "operating_hours"]
+        list(yaml_cfg["common_telemetry_columns"])
         + [config["id_col"]]
         + config["health_cols"]
         + config["key_numeric_cols"]
     )
-    derived_cols = [
-        "operating_state",
-        "vibration_trend_7d",
-        "temp_variation_24h",
-        "speed_stability",
-        "efficiency_degradation_rate",
-        "pressure_ratio",
-        "load_factor",
-    ]
+    derived_cols = list(yaml_cfg["derived_columns"])
     return {
         "equipment_type": equipment_type,
         "stable_columns": stable_cols,
