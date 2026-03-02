@@ -2,8 +2,7 @@
 Pump Data Simulator
 
 This module simulates industrial pumps typical of offshore platforms,
-refineries, and process facilities. Pumps are the most numerous rotating equipment
-in oil & gas operations, critical for production continuity and safety.
+refineries, and process facilities. 
 
 Key Features:
 - Cavitation detection through NPSH monitoring and acoustic signatures
@@ -19,8 +18,6 @@ import numpy as np
 import random
 import math
 from datetime import datetime, timedelta
-
-# Try to import enhancement modules
 ENHANCEMENTS_AVAILABLE = False
 try:
     from .physics import (

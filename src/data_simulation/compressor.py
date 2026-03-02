@@ -20,8 +20,6 @@ import random
 import math
 from datetime import datetime, timedelta
 from typing import Tuple
-
-# Try to import enhancement modules
 ENHANCEMENTS_AVAILABLE = False
 try:
     from .physics import (
