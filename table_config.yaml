@@ -92,10 +92,6 @@ equipment_types:
 
     test_telemetry:
       table: test_data.gas_turbine_telemetry
-    test_failure:
-      table: test_data.gas_turbine_failures
-    test_maintenance:
-      table: test_data.gas_turbine_maintenance
 
   compressor:
     master:
@@ -189,10 +185,6 @@ equipment_types:
 
     test_telemetry:
       table: test_data.compressor_telemetry
-    test_failure:
-      table: test_data.compressor_failures
-    test_maintenance:
-      table: test_data.compressor_maintenance
 
   pump:
     master:
@@ -291,10 +283,6 @@ equipment_types:
 
     test_telemetry:
       table: test_data.pump_telemetry
-    test_failure:
-      table: test_data.pump_failures
-    test_maintenance:
-      table: test_data.pump_maintenance
 
 
 # Common columns present in every telemetry table
