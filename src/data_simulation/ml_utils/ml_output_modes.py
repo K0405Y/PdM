@@ -232,12 +232,16 @@ class DataOutputFormatter:
         return telemetry_record
 
     def _format_sensor_only(self, record: Dict) -> Dict:
-        """Remove ground truth health and internal state fields, add noise."""
+        """Remove ground truth health and internal state fields, add noise, compute derived features."""
         filtered = {
             k: v for k, v in record.items()
             if k not in self.ground_truth_fields and k not in self.internal_state_fields
         }
-        return self._add_realistic_noise(filtered)
+        filtered = self._add_realistic_noise(filtered)
+        # Compute derived features from the original (unfiltered, un-noised) record
+        derived = self._feature_engineer.compute(record)
+        filtered.update(derived)
+        return filtered
 
     def _format_delayed_labels(self, record: Dict, timestamp: datetime) -> Optional[Dict]:
         """Health indicators available after configurable delay."""
