@@ -90,6 +90,9 @@ equipment_types:
       table: maintenance_events.gas_turbine_maintenance
       equipment_id_column: turbine_id
 
+    test_telemetry:
+      table: test_data.gas_turbine_telemetry
+
   compressor:
     master:
       table: master_data.compressors
@@ -179,6 +182,9 @@ equipment_types:
     maintenance:
       table: maintenance_events.compressor_maintenance
       equipment_id_column: compressor_id
+
+    test_telemetry:
+      table: test_data.compressor_telemetry
 
   pump:
     master:
@@ -275,6 +281,8 @@ equipment_types:
       table: maintenance_events.pump_maintenance
       equipment_id_column: pump_id
 
+    test_telemetry:
+      table: test_data.pump_telemetry
 
 
 # Common columns present in every telemetry table
@@ -302,6 +310,37 @@ derived_columns:
   - efficiency_degradation_rate
   - pressure_ratio
   - load_factor
+
+
+# Internal simulator state fields 
+internal_state_fields:
+  - operating_mode
+  - thermal_stress
+  - degradation_multiplier
+  - differential_temp_C
+
+
+# Feature engineering key mappings — maps equipment-specific telemetry keys
+# to canonical names used by FeatureEngineer for derived feature computation.
+feature_engineering:
+  vibration_keys:
+    - vibration_rms       # gas turbine, pump
+    - orbit_amplitude     # compressor
+  temperature_keys:
+    - bearing_temp_de
+    - bearing_temp_nde
+    - fluid_temp
+    - exhaust_gas_temp
+    - oil_temp
+    - discharge_temp
+  speed_key: speed
+  efficiency_key: efficiency
+  pressure_keys:
+    discharge: discharge_pressure
+    suction: suction_pressure
+  load_keys:
+    speed: speed
+    speed_target: speed_target
 
 
 
