@@ -272,7 +272,7 @@ def trigger_simulation(
                         telemetry_batch.append(record)
                     elif record["type"] == "failure":
                         total_failures.append(record)
-                    elif record["type"] in ("maintenance_start", "maintenance_complete"):
+                    elif record["type"] == "maintenance_start":
                         total_maintenance.append(record)
 
                 total_telemetry.extend(telemetry_batch)
