@@ -8,6 +8,7 @@ This package contains modules for ML-ready data generation:
 
 from .ml_output_modes import (
     DataOutputFormatter,
+    FeatureEngineer,
     OutputMode,
     TrainTestSplitter
 )
@@ -20,6 +21,7 @@ from .pipeline_enhanced import (
 
 __all__ = [
     'DataOutputFormatter',
+    'FeatureEngineer',
     'OutputMode',
     'TrainTestSplitter',
     'GeneratorBasedSimulation',
