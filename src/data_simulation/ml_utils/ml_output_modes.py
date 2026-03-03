@@ -14,12 +14,31 @@ Key Features:
 Reference: Industrial SCADA systems, real-world labeling practices
 """
 
-from typing import Dict, List, Optional
+import os
+from typing import Dict, List, Optional, Set
 from collections import deque
 from enum import Enum
 from datetime import datetime, timedelta
 import json
+import yaml
 import numpy as np
+
+
+def _load_config() -> Dict:
+    """Load table_config.yaml from project root."""
+    config_path = os.path.join(
+        os.path.dirname(__file__), '..', '..', '..', 'table_config.yaml'
+    )
+    with open(config_path, 'r', encoding='utf-8') as f:
+        return yaml.safe_load(f)
+
+
+def _collect_health_columns(cfg: Dict) -> Set[str]:
+    """Collect all health columns across equipment types."""
+    health = set()
+    for eq_cfg in cfg['equipment_types'].values():
+        health.update(eq_cfg.get('telemetry', {}).get('health_columns', []))
+    return health
 
 
 class OutputMode(Enum):
@@ -30,156 +49,225 @@ class OutputMode(Enum):
     DERIVED_FEATURES = "derived_features"  # Include engineered features
 
 
+class FeatureEngineer:
+    """Compute derived features from raw sensor readings.
+
+    Usable standalone for inference pipelines or internally by DataOutputFormatter.
+    Maintains rolling-window buffers for trend/stability features.
+    Key mappings are loaded from table_config.yaml.
+
+    Usage:
+        # Streaming (one record at a time, maintains state):
+        fe = FeatureEngineer()
+        features = fe.compute(sensor_record)
+
+        # Batch (list of time-ordered records, resets buffers first):
+        fe = FeatureEngineer()
+        all_features = fe.compute_batch(records)
+    """
+
+    def __init__(self, sample_interval_min: int = 5):
+        cfg = _load_config()
+        fe_cfg = cfg['feature_engineering']
+
+        self._vibration_keys = tuple(fe_cfg['vibration_keys'])
+        self._temperature_keys = tuple(fe_cfg['temperature_keys'])
+        self._speed_key = fe_cfg['speed_key']
+        self._efficiency_key = fe_cfg['efficiency_key']
+        self._pressure_keys = fe_cfg['pressure_keys']
+        self._load_keys = fe_cfg['load_keys']
+
+        samples_per_day = int(24 * 60 / sample_interval_min)
+        self._vibration_history = deque(maxlen=samples_per_day * 7)
+        self._temperature_history = deque(maxlen=samples_per_day)
+        self._speed_history = deque(maxlen=int(60 / sample_interval_min))
+        self._efficiency_history = deque(maxlen=samples_per_day * 7)
+
+    def reset(self):
+        """Clear all rolling buffers."""
+        self._vibration_history.clear()
+        self._temperature_history.clear()
+        self._speed_history.clear()
+        self._efficiency_history.clear()
+
+    def compute(self, record: Dict) -> Dict:
+        """Compute derived features for a single record.
+
+        Updates internal rolling buffers, so call in time order for
+        correct trend/stability calculations.
+        """
+        values = self._extract_telemetry_values(record)
+
+        if 'vibration' in values and np.isfinite(values['vibration']):
+            self._vibration_history.append(values['vibration'])
+        if 'temperature' in values and np.isfinite(values['temperature']):
+            self._temperature_history.append(values['temperature'])
+        if 'speed' in values and np.isfinite(values['speed']):
+            self._speed_history.append(values['speed'])
+        if 'efficiency' in values and np.isfinite(values['efficiency']):
+            self._efficiency_history.append(values['efficiency'])
+
+        features = {}
+
+        if len(self._vibration_history) >= 2:
+            x = np.arange(len(self._vibration_history))
+            coeffs = np.polyfit(x, list(self._vibration_history), 1)
+            features['vibration_trend_7d'] = float(coeffs[0])
+        else:
+            features['vibration_trend_7d'] = 0.0
+
+        if len(self._temperature_history) >= 2:
+            features['temp_variation_24h'] = float(np.std(list(self._temperature_history)))
+        else:
+            features['temp_variation_24h'] = 0.0
+
+        if len(self._speed_history) >= 2:
+            arr = np.array(self._speed_history)
+            mean_speed = np.mean(arr)
+            if mean_speed > 0:
+                features['speed_stability'] = float(np.std(arr) / mean_speed)
+            else:
+                features['speed_stability'] = 0.0
+        else:
+            features['speed_stability'] = 0.0
+
+        if len(self._efficiency_history) >= 2:
+            x = np.arange(len(self._efficiency_history))
+            coeffs = np.polyfit(x, list(self._efficiency_history), 1)
+            features['efficiency_degradation_rate'] = float(coeffs[0])
+        else:
+            features['efficiency_degradation_rate'] = 0.0
+
+        discharge_key = self._pressure_keys['discharge']
+        suction_key = self._pressure_keys['suction']
+        if discharge_key in record and suction_key in record:
+            suction = record.get(suction_key, 1)
+            if suction > 0:
+                features['pressure_ratio'] = record[discharge_key] / suction
+
+        speed_key = self._load_keys['speed']
+        target_key = self._load_keys['speed_target']
+        if speed_key in record and target_key in record:
+            if record[target_key] > 0:
+                features['load_factor'] = record[speed_key] / record[target_key]
+
+        return features
+
+    def compute_batch(self, records: List[Dict]) -> List[Dict]:
+        """Compute derived features for a batch of time-ordered records.
+
+        Resets buffers before processing so results are self-contained.
+        Returns a new list; each dict is the original record augmented
+        with derived feature keys.
+        """
+        self.reset()
+        results = []
+        for record in records:
+            features = self.compute(record)
+            augmented = record.copy()
+            augmented.update(features)
+            results.append(augmented)
+        return results
+
+    def _extract_telemetry_values(self, record: Dict) -> Dict:
+        """Extract canonical telemetry values from equipment-specific keys."""
+        values = {}
+
+        for key in self._vibration_keys:
+            if key in record:
+                values['vibration'] = record[key]
+                break
+
+        temps = [record[k] for k in self._temperature_keys
+                 if k in record and isinstance(record[k], (int, float))]
+        if temps:
+            values['temperature'] = max(temps)
+
+        if self._speed_key in record:
+            values['speed'] = record[self._speed_key]
+        if self._efficiency_key in record:
+            values['efficiency'] = record[self._efficiency_key]
+
+        return values
+
+
 class DataOutputFormatter:
-    """
-    Formats simulation output based on selected mode.
-    """
+    """Formats simulation output based on selected mode.
 
-    # Define which fields are "ground truth" vs "measurable"
-    GROUND_TRUTH_FIELDS = {
-        'health_hgp', 'health_blade', 'health_bearing', 'health_fuel',
-        'health_impeller', 'health_seal', 'health_seal_primary',
-        'health_seal_secondary', 'health_bearing_de', 'health_bearing_nde'
-    }
-
-    # Fields that would never be measured in reality (internal states)
-    INTERNAL_STATE_FIELDS = {
-        'operating_mode', 'thermal_stress', 'degradation_multiplier',
-        'differential_temp_C'  
-    }
+    Ground-truth health fields and internal state fields are loaded from
+    table_config.yaml rather than hardcoded.
+    """
 
     def __init__(self,
                  output_mode: OutputMode = OutputMode.FULL,
-                 label_delay_hours: int = 168):  # 1 week default
-        """
-        Initialize output formatter.
+                 label_delay_hours: int = 168,
+                 sample_interval_min: int = 5):
+        cfg = _load_config()
+        self.ground_truth_fields = _collect_health_columns(cfg)
+        self.internal_state_fields = set(cfg.get('internal_state_fields', []))
 
-        Args:
-            output_mode: Desired output mode
-            label_delay_hours: Hours of delay for DELAYED_LABELS mode
-        """
         self.output_mode = output_mode
         self.label_delay_hours = label_delay_hours
-        self.label_buffer = []  # For delayed labels mode
-
-        # Rolling history buffers for derived feature computation
-        # Window sizes assume 5-min sample intervals
-        self._vibration_history = deque(maxlen=2016)    # 7 days
-        self._temperature_history = deque(maxlen=288)   # 24 hours
-        self._speed_history = deque(maxlen=12)          # 1 hour
-        self._efficiency_history = deque(maxlen=2016)   # 7 days
+        self.label_buffer = []
+        self._feature_engineer = FeatureEngineer(sample_interval_min=sample_interval_min)
 
     def format_record(self,
                      telemetry_record: Dict,
                      timestamp: datetime) -> Optional[Dict]:
-        """
-        Format a single telemetry record according to output mode.
-
-        Args:
-            telemetry_record: Raw telemetry from simulator
-            timestamp: Record timestamp
-
-        Returns:
-            Formatted record or None (if delayed labels not ready)
-        """
+        """Format a single telemetry record according to output mode."""
         if self.output_mode == OutputMode.FULL:
-            return self._format_full(telemetry_record, timestamp)
+            return telemetry_record
 
         elif self.output_mode == OutputMode.SENSOR_ONLY:
-            return self._format_sensor_only(telemetry_record, timestamp)
+            return self._format_sensor_only(telemetry_record)
 
         elif self.output_mode == OutputMode.DELAYED_LABELS:
             return self._format_delayed_labels(telemetry_record, timestamp)
 
         elif self.output_mode == OutputMode.DERIVED_FEATURES:
-            return self._format_with_features(telemetry_record, timestamp)
+            formatted = telemetry_record.copy()
+            formatted['features'] = json.dumps(self._feature_engineer.compute(telemetry_record))
+            return formatted
 
-        return telemetry_record  # Fallback
+        return telemetry_record
 
-    def _format_full(self, record: Dict, timestamp: datetime) -> Dict:
-        """Full mode: all data including ground truth."""
-        return record  # No filtering
+    def _format_sensor_only(self, record: Dict) -> Dict:
+        """Remove ground truth health and internal state fields, add noise."""
+        filtered = {
+            k: v for k, v in record.items()
+            if k not in self.ground_truth_fields and k not in self.internal_state_fields
+        }
+        return self._add_realistic_noise(filtered)
 
-    def _format_sensor_only(self, record: Dict, timestamp: datetime) -> Dict:
-        """Sensor-only mode: remove ground truth health indicators."""
-        filtered = {}
-
-        for key, value in record.items():
-            # Skip ground truth fields
-            if key in self.GROUND_TRUTH_FIELDS:
-                continue
-            # Skip internal state fields
-            if key in self.INTERNAL_STATE_FIELDS:
-                continue
-            filtered[key] = value
-
-        # Add realistic sensor noise
-        filtered = self._add_realistic_noise(filtered)
-
-        return filtered
-
-    def _format_delayed_labels(self,
-                               record: Dict,
-                               timestamp: datetime) -> Optional[Dict]:
-        """
-        Delayed labels mode: health indicators available after delay.
-
-        Simulates real-world scenario where labels come from inspection
-        reports that take time to process.
-        """
-        # Add current record to buffer with timestamp
-        self.label_buffer.append({
-            'timestamp': timestamp,
-            'record': record.copy()
-        })
-
-        # Check if we have a record old enough to release
+    def _format_delayed_labels(self, record: Dict, timestamp: datetime) -> Optional[Dict]:
+        """Health indicators available after configurable delay."""
+        self.label_buffer.append({'timestamp': timestamp, 'record': record.copy()})
         cutoff_time = timestamp - timedelta(hours=self.label_delay_hours)
-
-        # Find records older than cutoff
         ready_records = [r for r in self.label_buffer if r['timestamp'] <= cutoff_time]
 
         if not ready_records:
-            # Return sensor-only version while waiting for labels
-            return self._format_sensor_only(record, timestamp)
+            return self._format_sensor_only(record)
 
-        # Release oldest ready record (FIFO)
         ready = ready_records[0]
         self.label_buffer.remove(ready)
-
-        # Return with full labels (they're now "available")
         return ready['record']
 
-    def _format_with_features(self, record: Dict, timestamp: datetime) -> Dict:
-        """Add derived features commonly used in ML pipelines."""
-        formatted = record.copy()
-        # Serialize to JSON for database compatibility
-        formatted['features'] = json.dumps(self._compute_derived_features(record))
-        return formatted
-
     def _add_realistic_noise(self, record: Dict) -> Dict:
-        """
-        Add realistic sensor measurement noise.
-
-        Real sensors have noise, drift, and occasional outliers.
-        """
+        """Add realistic sensor measurement noise."""
         noisy = record.copy()
-
-        # Noise levels for different sensor types (typical industrial sensors)
         noise_config = {
-            'temperature': 0.5,    # °C
-            'pressure': 5.0,       # kPa
-            'speed': 10.0,         # RPM
-            'vibration': 0.05,     # mm/s
-            'flow': 2.0,           # m³/hr
-            'current': 0.5         # A
+            'temperature': 0.5,
+            'pressure': 5.0,
+            'speed': 10.0,
+            'vibration': 0.05,
+            'flow': 2.0,
+            'current': 0.5,
         }
 
         for key, value in noisy.items():
             if not isinstance(value, (int, float)):
                 continue
 
-            # Determine sensor type from key name
             sensor_type = None
             if 'temp' in key.lower():
                 sensor_type = 'temperature'
@@ -197,106 +285,11 @@ class DataOutputFormatter:
             if sensor_type and sensor_type in noise_config:
                 noise_std = noise_config[sensor_type]
                 noise = np.random.normal(0, noise_std)
-
-                # Occasional outliers (1% chance)
                 if np.random.random() < 0.01:
                     noise *= 3.0
-
                 noisy[key] = value + noise
 
         return noisy
-
-    def _extract_telemetry_values(self, record: Dict) -> Dict:
-        """Extract canonical telemetry values from equipment-specific keys."""
-        values = {}
-
-        # Vibration: prefer vibration_rms, fall back to orbit_amplitude (compressor)
-        if 'vibration_rms' in record:
-            values['vibration'] = record['vibration_rms']
-        elif 'orbit_amplitude' in record:
-            values['vibration'] = record['orbit_amplitude']
-
-        # Temperature: max of available bearing/process temps
-        temp_keys = ['bearing_temp_de', 'bearing_temp_nde', 'fluid_temp',
-                     'exhaust_gas_temp', 'oil_temp', 'discharge_temp']
-        temps = [record[k] for k in temp_keys if k in record and isinstance(record[k], (int, float))]
-        if temps:
-            values['temperature'] = max(temps)
-
-        # Speed and efficiency: universal keys
-        if 'speed' in record:
-            values['speed'] = record['speed']
-        if 'efficiency' in record:
-            values['efficiency'] = record['efficiency']
-
-        return values
-
-    def _compute_derived_features(self, record: Dict) -> Dict:
-        """
-        Compute derived features from rolling history buffers.
-
-        Features are computed from deque-based sliding windows that fill
-        progressively. Returns 0.0 during cold-start (< 2 samples).
-        """
-        values = self._extract_telemetry_values(record)
-
-        # Append to history buffers (guard against NaN)
-        if 'vibration' in values and np.isfinite(values['vibration']):
-            self._vibration_history.append(values['vibration'])
-        if 'temperature' in values and np.isfinite(values['temperature']):
-            self._temperature_history.append(values['temperature'])
-        if 'speed' in values and np.isfinite(values['speed']):
-            self._speed_history.append(values['speed'])
-        if 'efficiency' in values and np.isfinite(values['efficiency']):
-            self._efficiency_history.append(values['efficiency'])
-
-        features = {}
-
-        # vibration_trend_7d: slope of linear fit over vibration history
-        if len(self._vibration_history) >= 2:
-            x = np.arange(len(self._vibration_history))
-            coeffs = np.polyfit(x, list(self._vibration_history), 1)
-            features['vibration_trend_7d'] = float(coeffs[0])
-        else:
-            features['vibration_trend_7d'] = 0.0
-
-        # temp_variation_24h: std deviation over temperature history
-        if len(self._temperature_history) >= 2:
-            features['temp_variation_24h'] = float(np.std(list(self._temperature_history)))
-        else:
-            features['temp_variation_24h'] = 0.0
-
-        # speed_stability: coefficient of variation over speed history
-        if len(self._speed_history) >= 2:
-            arr = np.array(self._speed_history)
-            mean_speed = np.mean(arr)
-            if mean_speed > 0:
-                features['speed_stability'] = float(np.std(arr) / mean_speed)
-            else:
-                features['speed_stability'] = 0.0
-        else:
-            features['speed_stability'] = 0.0
-
-        # efficiency_degradation_rate: slope over efficiency history
-        if len(self._efficiency_history) >= 2:
-            x = np.arange(len(self._efficiency_history))
-            coeffs = np.polyfit(x, list(self._efficiency_history), 1)
-            features['efficiency_degradation_rate'] = float(coeffs[0])
-        else:
-            features['efficiency_degradation_rate'] = 0.0
-
-        # Ratio features (from current record)
-        if 'discharge_pressure' in record and 'suction_pressure' in record:
-            suction = record.get('suction_pressure', 1)
-            if suction > 0:
-                features['pressure_ratio'] = record['discharge_pressure'] / suction
-
-        # Operating regime
-        if 'speed' in record and 'speed_target' in record:
-            if record['speed_target'] > 0:
-                features['load_factor'] = record['speed'] / record['speed_target']
-
-        return features
 
 
 class TrainTestSplitter:
