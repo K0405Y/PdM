@@ -22,6 +22,8 @@ from data_simulation.physics.weather_api_client import (
 from data_simulation.physics.environmental_conditions import (
     EnvironmentalConditions, LocationType
 )
+from data_simulation.ml_utils import OutputMode
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -36,6 +38,13 @@ class SimulationRequest(BaseModel):
     sample_interval_min: int = Field(5, ge=1, le=60)
     degradation_multiplier: float = Field(1.0, ge=0.1, le=10.0)
     auto_ingest: bool = True
+    output_mode: str = Field(
+        "full",
+        description="Output mode: full (training with ground truth), "
+                    "sensor_only (inference testing, no health, adds noise), "
+                    "delayed_labels (health labels with configurable lag), "
+                    "derived_features (includes engineered features)"
+    )
     start_time: Optional[datetime] = Field(
         None, description="Simulation start time (ISO 8601). Defaults to now - duration_days.")
 
@@ -134,6 +143,13 @@ def trigger_simulation(
     Returns a job_id to poll for status via GET /{job_id}/status.
     If auto_ingest is true, simulation output is bulk-inserted into the database.
     """
+    # Validate output_mode
+    try:
+        output_mode = OutputMode(request.output_mode)
+    except ValueError:
+        raise HTTPException(400, f"Invalid output_mode: {request.output_mode}. "
+                                 f"Valid: {[m.value for m in OutputMode]}")
+
     yaml_cfg = load_table_config()
     if request.equipment_type not in yaml_cfg["equipment_types"]:
         raise HTTPException(400, f"Unknown equipment type: {request.equipment_type}")
@@ -238,6 +254,7 @@ def trigger_simulation(
 
                 # Build equipment instance from config
                 constructor_kwargs = _build_constructor_kwargs(eq_type, config)
+                constructor_kwargs["output_mode"] = output_mode
                 if env_model is not None:
                     constructor_kwargs["env_model"] = env_model
                     constructor_kwargs["enable_environmental"] = True
@@ -272,8 +289,10 @@ def trigger_simulation(
             )
 
             # Auto-ingest if requested
+            use_test = output_mode == OutputMode.SENSOR_ONLY
             if request.auto_ingest and total_telemetry:
-                bulk_insert_telemetry(db, total_telemetry, request.equipment_type)
+                bulk_insert_telemetry(db, total_telemetry, request.equipment_type,
+                                      use_test_schema=use_test)
             if request.auto_ingest and total_failures:
                 insert_failures(db, total_failures) 
             if request.auto_ingest and total_maintenance:
