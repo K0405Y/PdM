@@ -119,10 +119,8 @@ CREATE INDEX IF NOT EXISTS idx_td_cp_pump_time ON test_data.pump_telemetry(pump_
 CREATE INDEX IF NOT EXISTS idx_td_cp_time ON test_data.pump_telemetry(sample_time DESC);
 
 
--- ============================================================
 -- Test Data — Failure Events (ground truth for model evaluation)
 -- Mirrors failure_events.* tables with identical columns.
--- ============================================================
 
 CREATE TABLE IF NOT EXISTS test_data.gas_turbine_failures (
     failure_id BIGSERIAL PRIMARY KEY,
@@ -175,10 +173,8 @@ CREATE INDEX IF NOT EXISTS idx_td_cp_failures_pump ON test_data.pump_failures(pu
 CREATE INDEX IF NOT EXISTS idx_td_cp_failures_time ON test_data.pump_failures(failure_time DESC);
 
 
--- ============================================================
 -- Test Data — Maintenance Events (ground truth for model evaluation)
 -- Mirrors maintenance_events.* tables with identical columns.
--- ============================================================
 
 CREATE TABLE IF NOT EXISTS test_data.gas_turbine_maintenance (
     maintenance_id BIGSERIAL PRIMARY KEY,
