@@ -117,3 +117,105 @@ CREATE INDEX IF NOT EXISTS idx_td_cc_compressor_time ON test_data.compressor_tel
 CREATE INDEX IF NOT EXISTS idx_td_cc_time ON test_data.compressor_telemetry(sample_time DESC);
 CREATE INDEX IF NOT EXISTS idx_td_cp_pump_time ON test_data.pump_telemetry(pump_id, sample_time DESC);
 CREATE INDEX IF NOT EXISTS idx_td_cp_time ON test_data.pump_telemetry(sample_time DESC);
+
+
+-- ============================================================
+-- Test Data — Failure Events (ground truth for model evaluation)
+-- Mirrors failure_events.* tables with identical columns.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS test_data.gas_turbine_failures (
+    failure_id BIGSERIAL PRIMARY KEY,
+    turbine_id INT NOT NULL REFERENCES master_data.gas_turbines(turbine_id) ON DELETE CASCADE,
+    failure_time TIMESTAMP NOT NULL,
+    operating_hours_at_failure FLOAT,
+    failure_mode_code VARCHAR(50),
+    failure_description TEXT,
+    speed_rpm_at_failure FLOAT,
+    egt_celsius_at_failure FLOAT,
+    vibration_mm_s_at_failure FLOAT,
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS test_data.compressor_failures (
+    failure_id BIGSERIAL PRIMARY KEY,
+    compressor_id INT NOT NULL REFERENCES master_data.compressors(compressor_id) ON DELETE CASCADE,
+    failure_time TIMESTAMP NOT NULL,
+    operating_hours_at_failure FLOAT,
+    failure_mode_code VARCHAR(50),
+    failure_description TEXT,
+    speed_rpm_at_failure FLOAT,
+    surge_margin_at_failure FLOAT,
+    surge_cycles_at_failure INT,
+    vibration_amplitude_at_failure FLOAT,
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS test_data.pump_failures (
+    failure_id BIGSERIAL PRIMARY KEY,
+    pump_id INT NOT NULL REFERENCES master_data.pumps(pump_id) ON DELETE CASCADE,
+    failure_time TIMESTAMP NOT NULL,
+    operating_hours_at_failure FLOAT,
+    failure_mode_code VARCHAR(50),
+    failure_description TEXT,
+    speed_rpm_at_failure FLOAT,
+    vibration_mm_s_at_failure FLOAT,
+    cavitation_margin_at_failure FLOAT,
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_td_gt_failures_turbine ON test_data.gas_turbine_failures(turbine_id);
+CREATE INDEX IF NOT EXISTS idx_td_gt_failures_time ON test_data.gas_turbine_failures(failure_time DESC);
+CREATE INDEX IF NOT EXISTS idx_td_cc_failures_compressor ON test_data.compressor_failures(compressor_id);
+CREATE INDEX IF NOT EXISTS idx_td_cc_failures_time ON test_data.compressor_failures(failure_time DESC);
+CREATE INDEX IF NOT EXISTS idx_td_cp_failures_pump ON test_data.pump_failures(pump_id);
+CREATE INDEX IF NOT EXISTS idx_td_cp_failures_time ON test_data.pump_failures(failure_time DESC);
+
+
+-- ============================================================
+-- Test Data — Maintenance Events (ground truth for model evaluation)
+-- Mirrors maintenance_events.* tables with identical columns.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS test_data.gas_turbine_maintenance (
+    maintenance_id BIGSERIAL PRIMARY KEY,
+    turbine_id INT NOT NULL REFERENCES master_data.gas_turbines(turbine_id) ON DELETE CASCADE,
+    start_time TIMESTAMP NOT NULL,
+    end_time TIMESTAMP,
+    failure_code VARCHAR(50),
+    downtime_hours FLOAT,
+    repaired_components JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS test_data.compressor_maintenance (
+    maintenance_id BIGSERIAL PRIMARY KEY,
+    compressor_id INT NOT NULL REFERENCES master_data.compressors(compressor_id) ON DELETE CASCADE,
+    start_time TIMESTAMP NOT NULL,
+    end_time TIMESTAMP,
+    failure_code VARCHAR(50),
+    downtime_hours FLOAT,
+    repaired_components JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS test_data.pump_maintenance (
+    maintenance_id BIGSERIAL PRIMARY KEY,
+    pump_id INT NOT NULL REFERENCES master_data.pumps(pump_id) ON DELETE CASCADE,
+    start_time TIMESTAMP NOT NULL,
+    end_time TIMESTAMP,
+    failure_code VARCHAR(50),
+    downtime_hours FLOAT,
+    repaired_components JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_td_gt_maint_turbine ON test_data.gas_turbine_maintenance(turbine_id);
+CREATE INDEX IF NOT EXISTS idx_td_gt_maint_time ON test_data.gas_turbine_maintenance(start_time DESC);
+CREATE INDEX IF NOT EXISTS idx_td_cc_maint_compressor ON test_data.compressor_maintenance(compressor_id);
+CREATE INDEX IF NOT EXISTS idx_td_cc_maint_time ON test_data.compressor_maintenance(start_time DESC);
+CREATE INDEX IF NOT EXISTS idx_td_cp_maint_pump ON test_data.pump_maintenance(pump_id);
+CREATE INDEX IF NOT EXISTS idx_td_cp_maint_time ON test_data.pump_maintenance(start_time DESC);
