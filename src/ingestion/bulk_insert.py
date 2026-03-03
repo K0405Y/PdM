@@ -159,8 +159,16 @@ def bulk_insert_telemetry(db, records: List[Dict], equipment_type: str,
     return len(records)
 
 
-def insert_failures(db, failures: List[Dict]) -> int:
-    """Insert failure records with NumPy type cleaning."""
+def insert_failures(db, failures: List[Dict],
+                    use_test_schema: bool = False) -> int:
+    """Insert failure records with NumPy type cleaning.
+
+    Args:
+        db: Database connection object
+        failures: List of failure records from simulation
+        use_test_schema: If True, insert into test_data.* tables instead of
+                         failure_events.* (preserves ground truth for evaluation)
+    """
     if not failures:
         return 0
 
@@ -169,7 +177,8 @@ def insert_failures(db, failures: List[Dict]) -> int:
             return val.item()
         return val
 
-    logger.info(f"Inserting {len(failures)} failure events")
+    schema_label = "test_data" if use_test_schema else "failure_events"
+    logger.info(f"Inserting {len(failures)} failure events into {schema_label}")
 
     yaml_cfg = load_table_config()
 
@@ -180,13 +189,15 @@ def insert_failures(db, failures: List[Dict]) -> int:
             fcfg = yaml_cfg["equipment_types"][eq_type]["failures"]
             state = record.get('state', {})
 
+            table = (yaml_cfg["equipment_types"][eq_type]["test_failure"]["table"]
+                     if use_test_schema else fcfg["table"])
             id_col = fcfg["equipment_id_column"]
             insert_cols = fcfg["insert_columns"]
             state_mappings = fcfg["state_key_mappings"]
 
             all_cols = [id_col] + insert_cols
             placeholders = ', '.join([f':val{i}' for i in range(len(all_cols))])
-            sql = f"INSERT INTO {fcfg['table']} ({', '.join(all_cols)}) VALUES ({placeholders})"
+            sql = f"INSERT INTO {table} ({', '.join(all_cols)}) VALUES ({placeholders})"
 
             # Common values: equipment_id, failure_time, operating_hours, failure_mode_code
             values = {
@@ -213,8 +224,16 @@ def insert_failures(db, failures: List[Dict]) -> int:
     return len(failures)
 
 
-def insert_maintenance(db, maintenance_records: List[Dict]) -> int:
-    """Insert maintenance event records with computed end_time."""
+def insert_maintenance(db, maintenance_records: List[Dict],
+                       use_test_schema: bool = False) -> int:
+    """Insert maintenance event records with computed end_time.
+
+    Args:
+        db: Database connection object
+        maintenance_records: List of maintenance records from simulation
+        use_test_schema: If True, insert into test_data.* tables instead of
+                         maintenance_events.* (preserves ground truth for evaluation)
+    """
     if not maintenance_records:
         return 0
 
@@ -223,7 +242,8 @@ def insert_maintenance(db, maintenance_records: List[Dict]) -> int:
             return val.item()
         return val
 
-    logger.info(f"Inserting {len(maintenance_records)} maintenance events")
+    schema_label = "test_data" if use_test_schema else "maintenance_events"
+    logger.info(f"Inserting {len(maintenance_records)} maintenance events into {schema_label}")
 
     yaml_cfg = load_table_config()
     columns = yaml_cfg["maintenance_insert_columns"]
@@ -234,9 +254,11 @@ def insert_maintenance(db, maintenance_records: List[Dict]) -> int:
             eq_type = record['equipment_type']
             mcfg = yaml_cfg["equipment_types"][eq_type]["maintenance"]
 
+            table = (yaml_cfg["equipment_types"][eq_type]["test_maintenance"]["table"]
+                     if use_test_schema else mcfg["table"])
             all_cols = [mcfg['equipment_id_column']] + columns
             placeholders = ', '.join([f':val{i}' for i in range(len(all_cols))])
-            sql = f"INSERT INTO {mcfg['table']} ({', '.join(all_cols)}) VALUES ({placeholders})"
+            sql = f"INSERT INTO {table} ({', '.join(all_cols)}) VALUES ({placeholders})"
 
             start_time = record['start_time']
             downtime_hours = _clean(record['downtime_hours'])

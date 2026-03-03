@@ -294,9 +294,9 @@ def trigger_simulation(
                 bulk_insert_telemetry(db, total_telemetry, request.equipment_type,
                                       use_test_schema=use_test)
             if request.auto_ingest and total_failures:
-                insert_failures(db, total_failures) 
+                insert_failures(db, total_failures, use_test_schema=use_test)
             if request.auto_ingest and total_maintenance:
-                insert_maintenance(db, total_maintenance)
+                insert_maintenance(db, total_maintenance, use_test_schema=use_test)
 
             _jobs[job_id]["status"] = "completed"
             _jobs[job_id]["completed_at"] = datetime.now()
