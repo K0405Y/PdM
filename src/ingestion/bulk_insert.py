@@ -13,7 +13,7 @@ import logging
 import os
 from datetime import timedelta
 from io import StringIO
-from typing import List, Dict, Set
+from typing import List, Dict
 import yaml
 from sqlalchemy import text
 
@@ -41,60 +41,62 @@ def _build_column_mappings() -> Dict[str, dict]:
     }
 
 
-def _build_derived_feature_keys() -> Set[str]:
-    """Build the set of derived feature keys from YAML config."""
-    cfg = load_table_config()
-    return set(cfg["derived_columns"]) - {"operating_state"}
-
-
 # Column mappings: state_key -> database_column (loaded from YAML)
 _COLUMN_MAPPINGS = _build_column_mappings()
 TURBINE_COLUMNS = _COLUMN_MAPPINGS["turbine"]
 COMPRESSOR_COLUMNS = _COLUMN_MAPPINGS["compressor"]
 PUMP_COLUMNS = _COLUMN_MAPPINGS["pump"]
 
-# Keys that come from the JSON 'features' field rather than directly from state
-DERIVED_FEATURE_KEYS: Set[str] = _build_derived_feature_keys()
-
 # Record-level keys (not from state dict)
 _RECORD_KEYS = {'equipment_id', 'sample_time', 'operating_hours'}
 
 
 def _get_value(record: Dict, key: str, defaults: Dict) -> str:
-    """Extract value from record, checking state dict and JSON features."""
+    """Extract value from record, checking state dict and JSON features.
+
+    Tries flat state keys first, then falls back to the JSON 'features'
+    field if present (for DERIVED_FEATURES output mode).
+    """
     state = record.get('state', {})
 
     if key in _RECORD_KEYS:
         value = record.get(key)
-    elif key in DERIVED_FEATURE_KEYS:
-        # Extract from JSON 'features' field in state
-        features_raw = state.get('features')
-        if features_raw:
-            features = json.loads(features_raw) if isinstance(features_raw, str) else features_raw
-            value = features.get(key)
-        else:
-            value = None
     else:
-        # All other keys are flat in the state dict
         value = state.get(key)
+        # Fall back to JSON 'features' field if key not found flat
+        if value is None:
+            features_raw = state.get('features')
+            if features_raw:
+                features = json.loads(features_raw) if isinstance(features_raw, str) else features_raw
+                value = features.get(key)
 
-    # Use default if missing
     if value is None:
         value = defaults.get(key)
 
-    # Convert numpy types
     if HAS_NUMPY and isinstance(value, (np.integer, np.floating)):
         value = float(value)
 
-    # Round floats for consistent precision
     if isinstance(value, float):
         value = round(value, 4)
 
-    # Return as string or NULL marker
     return str(value) if value is not None else '\\N'
 
 
-def bulk_insert_telemetry(db, records: List[Dict], equipment_type: str) -> int:
+def _get_test_column_mappings(eq_cfg: dict) -> dict:
+    """Derive test_telemetry column mappings from telemetry mappings.
+
+    Uses telemetry.column_mappings minus any keys whose DB column name
+    appears in telemetry.health_columns.
+    """
+    health_cols = set(eq_cfg["telemetry"].get("health_columns", []))
+    return {
+        k: v for k, v in eq_cfg["telemetry"]["column_mappings"].items()
+        if v not in health_cols
+    }
+
+
+def bulk_insert_telemetry(db, records: List[Dict], equipment_type: str,
+                          use_test_schema: bool = False) -> int:
     """
     Fast bulk insert using PostgreSQL COPY command.
 
@@ -103,6 +105,9 @@ def bulk_insert_telemetry(db, records: List[Dict], equipment_type: str) -> int:
         records: List of telemetry records from simulate_equipment
                  (each with 'equipment_id', 'sample_time', 'operating_hours', 'state')
         equipment_type: 'turbine', 'compressor', or 'pump'
+        use_test_schema: If True, insert into test_data.* tables (sensor-only,
+                         no health columns). Column mappings are derived from
+                         telemetry mappings minus health_columns.
 
     Returns:
         Number of records inserted
@@ -110,12 +115,17 @@ def bulk_insert_telemetry(db, records: List[Dict], equipment_type: str) -> int:
     if not records:
         return 0
 
-    # Get configuration for equipment type from YAML
     cfg = load_table_config()
     eq_cfg = cfg["equipment_types"][equipment_type]
-    columns_map = eq_cfg["telemetry"]["column_mappings"]
-    table = eq_cfg["telemetry"]["table"]
-    defaults = {}  # Missing values become NULL via \\N
+
+    if use_test_schema:
+        table = eq_cfg["test_telemetry"]["table"]
+        columns_map = _get_test_column_mappings(eq_cfg)
+    else:
+        table = eq_cfg["telemetry"]["table"]
+        columns_map = eq_cfg["telemetry"]["column_mappings"]
+
+    defaults = {}
 
     # Build CSV buffer for COPY command
     buffer = StringIO()
@@ -128,12 +138,13 @@ def bulk_insert_telemetry(db, records: List[Dict], equipment_type: str) -> int:
     buffer.seek(0)
 
     # Execute PostgreSQL COPY command
+    schema = "test_data" if use_test_schema else "telemetry"
     session = db.get_session()
     try:
         raw_conn = session.connection().connection
         cursor = raw_conn.cursor()
 
-        cursor.execute("SET search_path TO telemetry, master_data, failure_events, public")
+        cursor.execute(f"SET search_path TO {schema}, master_data, failure_events, public")
 
         sql = f"COPY {table} ({','.join(columns_map.values())}) FROM STDIN WITH CSV DELIMITER '\t' NULL '\\N'"
         cursor.copy_expert(sql, buffer)
