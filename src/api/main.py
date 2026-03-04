@@ -11,11 +11,14 @@ from api.config import get_settings, load_table_config
 from api.dependencies import init_database, shutdown_database, get_db
 from api.routers import master_data, weather, telemetry, ml, simulation
 from api.utils import TABLE_CONFIG
+from api.ngrok import start_tunnel, stop_tunnel
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_database()
+    start_tunnel()
     yield
+    stop_tunnel()
     shutdown_database()
 
 
