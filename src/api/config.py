@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     weather_api_provider: str = "weatherapi"
     allowed_origins: str = "*"
     db_schemas_dir: str = os.path.join(_project_root, "db schemas")
+    ngrok_enabled: bool = False
+    ngrok_auth_token: str = ""
+    ngrok_domain: str = ""
 
     @property
     def cors_origins(self) -> List[str]:
