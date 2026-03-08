@@ -34,12 +34,6 @@ CREATE TABLE IF NOT EXISTS telemetry.gas_turbine_telemetry (
     upset_active BOOLEAN,
     upset_type VARCHAR(50),
     upset_severity FLOAT,
-    -- Derived features (DERIVED_FEATURES output mode)
-    vibration_trend_7d FLOAT,
-    temp_variation_24h FLOAT,
-    speed_stability FLOAT,
-    efficiency_degradation_rate FLOAT,
-    load_factor FLOAT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -90,13 +84,6 @@ CREATE TABLE IF NOT EXISTS telemetry.compressor_telemetry (
     upset_active BOOLEAN,
     upset_type VARCHAR(50),
     upset_severity FLOAT,
-    -- Derived features (DERIVED_FEATURES output mode)
-    vibration_trend_7d FLOAT,
-    temp_variation_24h FLOAT,
-    speed_stability FLOAT,
-    efficiency_degradation_rate FLOAT,
-    pressure_ratio FLOAT,
-    load_factor FLOAT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -139,13 +126,6 @@ CREATE TABLE IF NOT EXISTS telemetry.pump_telemetry (
     health_seal FLOAT,
     health_bearing_de FLOAT,
     health_bearing_nde FLOAT,
-    -- Derived features (DERIVED_FEATURES output mode)
-    temp_variation_24h FLOAT,
-    vibration_trend_7d FLOAT,
-    speed_stability FLOAT,
-    efficiency_degradation_rate FLOAT,
-    pressure_ratio FLOAT,
-    load_factor FLOAT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

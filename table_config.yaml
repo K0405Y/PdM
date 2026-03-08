@@ -64,11 +64,6 @@ equipment_types:
         upset_active: upset_active
         upset_type: upset_type
         upset_severity: upset_severity
-        vibration_trend_7d: vibration_trend_7d
-        temp_variation_24h: temp_variation_24h
-        speed_stability: speed_stability
-        efficiency_degradation_rate: efficiency_degradation_rate
-        load_factor: load_factor
 
     failures:
       table: failure_events.gas_turbine_failures
@@ -161,12 +156,6 @@ equipment_types:
         upset_active: upset_active
         upset_type: upset_type
         upset_severity: upset_severity
-        vibration_trend_7d: vibration_trend_7d
-        temp_variation_24h: temp_variation_24h
-        speed_stability: speed_stability
-        efficiency_degradation_rate: efficiency_degradation_rate
-        pressure_ratio: pressure_ratio
-        load_factor: load_factor
 
     failures:
       table: failure_events.compressor_failures
@@ -263,12 +252,6 @@ equipment_types:
         health_seal: health_seal
         health_bearing_de: health_bearing_de
         health_bearing_nde: health_bearing_nde
-        temp_variation_24h: temp_variation_24h
-        vibration_trend_7d: vibration_trend_7d
-        speed_stability: speed_stability
-        efficiency_degradation_rate: efficiency_degradation_rate
-        pressure_ratio: pressure_ratio
-        load_factor: load_factor
 
     failures:
       table: failure_events.pump_failures
