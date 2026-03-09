@@ -55,7 +55,7 @@ def _get_value(record: Dict, key: str, defaults: Dict) -> str:
     """Extract value from record, checking state dict and JSON features.
 
     Tries flat state keys first, then falls back to the JSON 'features'
-    field if present (for DERIVED_FEATURES output mode).
+    field if present.
     """
     state = record.get('state', {})
 
