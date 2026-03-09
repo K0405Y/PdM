@@ -22,6 +22,7 @@ from api.schemas.ml import (
     FeatureStat, HealthDistribution, ClassBalance, TimeCoverage,
     DatasetStatsResponse,
 )
+from data_simulation.ml_utils import FeatureEngineer
 
 router = APIRouter()
 
@@ -34,8 +35,6 @@ def _get_config(equipment_type: str) -> dict:
 
 
 # 1. Training Dataset Export
-
-
 @router.get("/{equipment_type}/export")
 def export_training_data(
     equipment_type: EquipmentTypeEnum,
@@ -46,7 +45,7 @@ def export_training_data(
     health_max: Optional[float] = Query(None, ge=0.0, le=1.0, description="Max health (e.g., 0.4 for failure-proximate)"),
     failure_mode: Optional[str] = Query(None, description="Filter records near a specific failure mode"),
     operating_state: Optional[OperatingState] = Query(None),
-    include_derived_features: bool = Query(True),
+    include_derived_features: bool = Query(False, description="Compute derived features on-the-fly via FeatureEngineer"),
     format: ExportFormat = Query(ExportFormat.json),
     after_id: Optional[int] = Query(None, description="Cursor for pagination"),
     limit: int = Query(5000, ge=1, le=50000),
@@ -107,6 +106,8 @@ def export_training_data(
         rows = rows[:limit]
 
     items = []
+    feature_engineer = FeatureEngineer() if include_derived_features else None
+
     for row in rows:
         d = dict(zip(columns, row))
         speed = d.get("speed_rpm", 0) or 0
@@ -117,10 +118,10 @@ def export_training_data(
         if operating_state and d["operating_state"] != operating_state.value:
             continue
 
-        # Strip derived features if not requested
-        if not include_derived_features:
-            for feat in load_table_config()["derived_columns"]:
-                d.pop(feat, None)
+        # Compute derived features on-the-fly if requested
+        if feature_engineer is not None:
+            derived = feature_engineer.compute(d)
+            d.update(derived)
 
         items.append(d)
 
@@ -304,8 +305,6 @@ def get_feature_windows(
 
 
 # 3. Label Vector
-
-
 @router.get("/{equipment_type}/{equipment_id}/labels", response_model=LabelVectorResponse)
 def get_label_vector(
     equipment_type: EquipmentTypeEnum,
