@@ -74,6 +74,7 @@ def list_turbines(
     location: Optional[str] = None,
     session: Session = Depends(get_db_session),
 ):
+    """List gas turbines with offset pagination and optional filters."""
     mcfg = _master_cfg("turbine")
     table, id_col = mcfg["table"], mcfg["id_column"]
     where, params = _build_where({"status": status, "location": location})
@@ -94,6 +95,7 @@ def list_turbines(
 
 @router.get("/turbines/{turbine_id}", response_model=GasTurbineResponse)
 def get_turbine(turbine_id: int, master: MasterData = Depends(get_master_data)):
+    """Retrieve a single gas turbine by ID."""
     configs = master.get_configs([turbine_id], "turbine")
     if not configs:
         raise HTTPException(404, "Turbine not found")
@@ -102,6 +104,7 @@ def get_turbine(turbine_id: int, master: MasterData = Depends(get_master_data)):
 
 @router.post("/turbines", response_model=GasTurbineResponse, status_code=201)
 def create_turbine(body: GasTurbineCreate, session: Session = Depends(get_db_session)):
+    """Create a new gas turbine. Only 'name' is required; all other fields have defaults."""
     mcfg = _master_cfg("turbine")
     table = mcfg["table"]
     cols = mcfg["insert_columns"]
@@ -119,6 +122,7 @@ def create_turbine(body: GasTurbineCreate, session: Session = Depends(get_db_ses
 
 @router.patch("/turbines/{turbine_id}", response_model=GasTurbineResponse)
 def update_turbine(turbine_id: int, body: GasTurbineUpdate, session: Session = Depends(get_db_session)):
+    """Partially update a gas turbine. Supply only the fields to change."""
     mcfg = _master_cfg("turbine")
     table, id_col = mcfg["table"], mcfg["id_column"]
     updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
@@ -140,6 +144,7 @@ def update_turbine(turbine_id: int, body: GasTurbineUpdate, session: Session = D
 
 @router.delete("/turbines/{turbine_id}", response_model=MessageResponse)
 def delete_turbine(turbine_id: int, session: Session = Depends(get_db_session)):
+    """Delete a gas turbine by ID. Returns 404 if not found."""
     mcfg = _master_cfg("turbine")
     table, id_col = mcfg["table"], mcfg["id_column"]
     result = session.execute(
@@ -161,6 +166,7 @@ def list_compressors(
     location: Optional[str] = None,
     session: Session = Depends(get_db_session),
 ):
+    """List compressors with offset pagination and optional filters."""
     mcfg = _master_cfg("compressor")
     table, id_col = mcfg["table"], mcfg["id_column"]
     where, params = _build_where({"status": status, "location": location})
@@ -181,6 +187,7 @@ def list_compressors(
 
 @router.get("/compressors/{compressor_id}", response_model=CompressorResponse)
 def get_compressor(compressor_id: int, master: MasterData = Depends(get_master_data)):
+    """Retrieve a single compressor by ID."""
     configs = master.get_configs([compressor_id], "compressor")
     if not configs:
         raise HTTPException(404, "Compressor not found")
@@ -189,6 +196,7 @@ def get_compressor(compressor_id: int, master: MasterData = Depends(get_master_d
 
 @router.post("/compressors", response_model=CompressorResponse, status_code=201)
 def create_compressor(body: CompressorCreate, session: Session = Depends(get_db_session)):
+    """Create a new compressor. Only 'name' is required; all other fields have defaults."""
     mcfg = _master_cfg("compressor")
     table = mcfg["table"]
     cols = mcfg["insert_columns"]
@@ -206,6 +214,7 @@ def create_compressor(body: CompressorCreate, session: Session = Depends(get_db_
 
 @router.patch("/compressors/{compressor_id}", response_model=CompressorResponse)
 def update_compressor(compressor_id: int, body: CompressorUpdate, session: Session = Depends(get_db_session)):
+    """Partially update a compressor. Supply only the fields to change."""
     mcfg = _master_cfg("compressor")
     table, id_col = mcfg["table"], mcfg["id_column"]
     updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
@@ -227,6 +236,7 @@ def update_compressor(compressor_id: int, body: CompressorUpdate, session: Sessi
 
 @router.delete("/compressors/{compressor_id}", response_model=MessageResponse)
 def delete_compressor(compressor_id: int, session: Session = Depends(get_db_session)):
+    """Delete a compressor by ID. Returns 404 if not found."""
     mcfg = _master_cfg("compressor")
     table, id_col = mcfg["table"], mcfg["id_column"]
     result = session.execute(
@@ -249,6 +259,7 @@ def list_pumps(
     service_type: Optional[str] = None,
     session: Session = Depends(get_db_session),
 ):
+    """List pumps with offset pagination and optional filters (including service_type)."""
     mcfg = _master_cfg("pump")
     table, id_col = mcfg["table"], mcfg["id_column"]
     where, params = _build_where({"status": status, "location": location, "service_type": service_type})
@@ -269,6 +280,7 @@ def list_pumps(
 
 @router.get("/pumps/{pump_id}", response_model=PumpResponse)
 def get_pump(pump_id: int, master: MasterData = Depends(get_master_data)):
+    """Retrieve a single pump by ID."""
     configs = master.get_configs([pump_id], "pump")
     if not configs:
         raise HTTPException(404, "Pump not found")
@@ -277,6 +289,7 @@ def get_pump(pump_id: int, master: MasterData = Depends(get_master_data)):
 
 @router.post("/pumps", response_model=PumpResponse, status_code=201)
 def create_pump(body: PumpCreate, session: Session = Depends(get_db_session)):
+    """Create a new pump. Only 'name' is required; all other fields have defaults."""
     mcfg = _master_cfg("pump")
     table = mcfg["table"]
     cols = mcfg["insert_columns"]
@@ -294,6 +307,7 @@ def create_pump(body: PumpCreate, session: Session = Depends(get_db_session)):
 
 @router.patch("/pumps/{pump_id}", response_model=PumpResponse)
 def update_pump(pump_id: int, body: PumpUpdate, session: Session = Depends(get_db_session)):
+    """Partially update a pump. Supply only the fields to change."""
     mcfg = _master_cfg("pump")
     table, id_col = mcfg["table"], mcfg["id_column"]
     updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
@@ -315,6 +329,7 @@ def update_pump(pump_id: int, body: PumpUpdate, session: Session = Depends(get_d
 
 @router.delete("/pumps/{pump_id}", response_model=MessageResponse)
 def delete_pump(pump_id: int, session: Session = Depends(get_db_session)):
+    """Delete a pump by ID. Returns 404 if not found."""
     mcfg = _master_cfg("pump")
     table, id_col = mcfg["table"], mcfg["id_column"]
     result = session.execute(

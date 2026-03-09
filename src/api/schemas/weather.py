@@ -42,10 +42,22 @@ class WeatherConditionsResponse(BaseModel):
     ice_formation_risk: Optional[float] = None
 
 class CachePreloadRequest(BaseModel):
+    """Preload weather cache for a location and date range."""
     location_name: str = Field(..., description="Location name for weather API (e.g., 'Lagos, Nigeria')")
     start_date: datetime
     end_date: datetime
     api_provider: str = "weatherapi"
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [{
+                "location_name": "Lagos, Nigeria",
+                "start_date": "2025-01-01T00:00:00",
+                "end_date": "2025-03-01T00:00:00",
+                "api_provider": "weatherapi",
+            }]
+        }
+    }
 
 class CacheStatsResponse(BaseModel):
     total_cached_entries: int

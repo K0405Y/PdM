@@ -34,8 +34,31 @@ class TelemetryRecord(BaseModel):
     state: Dict[str, Any]
 
 class TelemetryIngestRequest(BaseModel):
+    """Bulk ingest telemetry records for a single equipment type."""
     equipment_type: EquipmentTypeEnum
     records: List[TelemetryRecord] = Field(..., max_length=50000)
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [{
+                "equipment_type": "turbine",
+                "records": [
+                    {
+                        "equipment_id": 1,
+                        "sample_time": "2025-01-15T08:00:00",
+                        "operating_hours": 1200.5,
+                        "state": {
+                            "speed_rpm": 3580.0,
+                            "speed_target_rpm": 3600.0,
+                            "exhaust_temp_c": 520.0,
+                            "power_output_mw": 22.5,
+                            "vibration_mm_s": 3.2,
+                        },
+                    }
+                ],
+            }]
+        }
+    }
 
 class TelemetryIngestResponse(BaseModel):
     inserted_count: int

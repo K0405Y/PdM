@@ -32,6 +32,7 @@ router = APIRouter()
 _jobs: Dict[str, dict] = {}
 
 class SimulationRequest(BaseModel):
+    """Trigger a physics-based simulation for one or more equipment units."""
     equipment_ids: List[int]
     equipment_type: str  # turbine, compressor, pump
     duration_days: int = Field(180, ge=1, le=730)
@@ -39,11 +40,9 @@ class SimulationRequest(BaseModel):
     degradation_multiplier: float = Field(1.0, ge=0.1, le=10.0)
     auto_ingest: bool = True
     output_mode: str = Field(
-        "full",
-        description="Output mode: full (training with ground truth), "
-                    "sensor_only (inference testing, no health, adds noise), "
-                    "delayed_labels (health labels with configurable lag), "
-                    "derived_features (includes engineered features)"
+        "ground_truth",
+        description="Output mode: ground_truth (training with health indicators), "
+                    "sensor_only (inference testing, no health, adds noise)"
     )
     start_time: Optional[datetime] = Field(
         None, description="Simulation start time (ISO 8601). Defaults to now - duration_days.")
@@ -57,6 +56,23 @@ class SimulationRequest(BaseModel):
     weather_fallback_location_type: Optional[str] = Field(
         None, description="Synthetic fallback profile if API fails "
         "(offshore, desert, arctic, tropical, temperate, sahel, savanna)")
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [{
+                "equipment_ids": [1, 2, 3],
+                "equipment_type": "turbine",
+                "duration_days": 90,
+                "sample_interval_min": 5,
+                "degradation_multiplier": 1.5,
+                "auto_ingest": True,
+                "output_mode": "ground_truth",
+                "start_time": "2025-01-01T00:00:00",
+                "weather_location_name": "Lagos, Nigeria",
+                "weather_fallback_location_type": "tropical",
+            }]
+        }
+    }
 
     @model_validator(mode="after")
     def validate_weather_coords(self):
@@ -289,7 +305,7 @@ def trigger_simulation(
             )
 
             # Auto-ingest if requested
-            use_test = output_mode == OutputMode.SENSOR_ONLY
+            use_test = (output_mode == OutputMode.SENSOR_ONLY)
             if request.auto_ingest and total_telemetry:
                 bulk_insert_telemetry(db, total_telemetry, request.equipment_type,
                                       use_test_schema=use_test)
