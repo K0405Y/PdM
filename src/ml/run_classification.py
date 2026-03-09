@@ -13,18 +13,15 @@ import argparse
 import logging
 import json
 import numpy as np
-
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-
 from dotenv import load_dotenv
-load_dotenv()
-
 from src.ml.data_loader import get_engine, load_telemetry, load_failures, load_equipment_ids
 from src.ml.feature_prep import (
     label_telemetry,
     select_features,
     prepare_xy,
-    equipment_train_test_split,
+    impute_features,
+    temporal_train_test_split,
     temporal_validation_split,
 )
 from src.ml.train_xgb_classifier import (
@@ -45,6 +42,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+load_dotenv()
 
 def run_classification(
     equipment_type: str,
@@ -63,12 +61,11 @@ def run_classification(
         test_fraction: Fraction of equipment for test set
         db_url: PostgreSQL URL (or uses POSTGRES_URL env var)
     """
-    logger.info(f"{'='*60}")
+
     logger.info(f"FAILURE MODE CLASSIFICATION: {equipment_type.upper()}")
     logger.info(f"Prediction horizon: {prediction_horizon_hours}h")
-    logger.info(f"{'='*60}")
 
-    # --- 1. Load data ---
+    # 1. Load data 
     engine = get_engine(db_url)
     telemetry = load_telemetry(engine, equipment_type)
     failures = load_failures(engine, equipment_type)
@@ -78,22 +75,22 @@ def run_classification(
         logger.error(f"No telemetry data found for {equipment_type}")
         return
 
-    # --- 2. Label telemetry ---
+    # 2. Label telemetry
     labeled = label_telemetry(telemetry, failures, prediction_horizon_hours)
 
-    # --- 3. Equipment-based train/test split ---
-    train_df, test_df = equipment_train_test_split(
-        labeled, equipment_ids, test_fraction=test_fraction
+    # 3. Time-based train/test split
+    train_df, test_df = temporal_train_test_split(
+        labeled, test_fraction=test_fraction
     )
 
-    # --- 4. Temporal validation split within training set ---
+    # 4. Temporal validation split within training set
     train_df, val_df = temporal_validation_split(train_df, val_fraction=0.2)
 
-    # --- 5. Train SENSOR_ONLY model (primary / production model) ---
-    logger.info("\n--- SENSOR_ONLY MODEL ---")
+    # 5. Train SENSOR_ONLY model (primary / production model)
+    logger.info("\n SENSOR_ONLY MODEL")
     sensor_features = select_features(train_df, equipment_type, mode="sensor_only")
-    X_train_s, y_train_s, le = prepare_xy(train_df, sensor_features)
-    X_val_s, y_val_s, _ = prepare_xy(val_df, sensor_features)
+    X_train_s, y_train_s, le, sensor_medians = prepare_xy(train_df, sensor_features)
+    X_val_s, y_val_s, _, _ = prepare_xy(val_df, sensor_features, medians=sensor_medians)
     # Re-use same label encoder
     y_val_s = le.transform(val_df['label'].values)
 
@@ -110,52 +107,46 @@ def run_classification(
         log_to_mlflow=True,
     )
 
-    # --- 6. Evaluate on test set ---
+    # 6. Evaluate on test set
     X_test_s = test_df[sensor_features].copy()
-    for col in X_test_s.columns:
-        if X_test_s[col].dtype in ('float64', 'float32', 'int64', 'int32'):
-            X_test_s[col] = X_test_s[col].fillna(0)
+    X_test_s, _ = impute_features(X_test_s, medians=sensor_medians)
     y_test = le.transform(test_df['label'].values)
 
     results_sensor = evaluate_model(
         model_sensor, X_test_s, y_test, le, "sensor_only_test"
     )
 
-    # --- 7. Train FULL model (with health features) for gap analysis ---
-    logger.info("\n--- FULL MODEL (for gap analysis) ---")
-    full_features = select_features(train_df, equipment_type, mode="full")
-    X_train_f, y_train_f, _ = prepare_xy(train_df, full_features)
+    # 7. Train ground_truth model (with health features) for gap analysis
+    logger.info("\n ground_truth MODEL (for gap analysis)")
+    full_features = select_features(train_df, equipment_type, mode="ground_truth")
+    X_train_f, y_train_f, _, full_medians = prepare_xy(train_df, full_features)
     y_train_f = le.transform(train_df['label'].values)
     X_val_f = val_df[full_features].copy()
-    for col in X_val_f.columns:
-        if X_val_f[col].dtype in ('float64', 'float32', 'int64', 'int32'):
-            X_val_f[col] = X_val_f[col].fillna(0)
+    X_val_f, _ = impute_features(X_val_f, medians=full_medians)
     y_val_f = le.transform(val_df['label'].values)
 
-    model_full, _ = train_fleet_model(
+    model_ground_truth, _ = train_fleet_model(
         X_train_f, y_train_f, X_val_f, y_val_f,
         label_encoder=le,
         equipment_type=equipment_type,
-        mode="all",
+        mode="ground_truth",
         params={'n_estimators': 300},
         log_to_mlflow=False,
     )
 
     X_test_f = test_df[full_features].copy()
-    for col in X_test_f.columns:
-        if X_test_f[col].dtype in ('float64', 'float32', 'int64', 'int32'):
-            X_test_f[col] = X_test_f[col].fillna(0)
+    X_test_f, _ = impute_features(X_test_f, medians=full_medians)
 
     gap_results = evaluate_all_vs_sensor_only(
-        model_full, model_sensor,
+        model_ground_truth, model_sensor,
         X_test_f, X_test_s,
         y_test, le,
     )
 
-    # --- 8. Feature importance ---
+    # 8. Feature importance
     fi = get_feature_importance(model_sensor, sensor_features)
 
-    # --- 9. Save model ---
+    # 9. Save model
     model_path = os.path.join(output_dir, f"{equipment_type}_failure_classifier.json")
     save_model(model_sensor, model_path)
 
@@ -171,13 +162,12 @@ def run_classification(
         }, f, indent=2)
     logger.info(f"Label encoder saved to {le_path}")
 
-    # --- 10. Summary ---
-    logger.info(f"\n{'='*60}")
+    # 10. Summary
+
     logger.info("SUMMARY")
-    logger.info(f"{'='*60}")
     logger.info(f"Equipment type:     {equipment_type}")
     logger.info(f"Sensor-only F1:     {results_sensor['macro_f1']:.4f}")
-    logger.info(f"Full-mode F1:       {gap_results['full']['macro_f1']:.4f}")
+    logger.info(f"ground_truth-mode F1:       {gap_results['ground_truth']['macro_f1']:.4f}")
     logger.info(f"Generalization gap:  {gap_results['gap']['macro_f1_gap']:.4f}")
     logger.info(f"Model saved:        {model_path}")
     logger.info(f"Top feature:        {fi.iloc[0]['feature']}")

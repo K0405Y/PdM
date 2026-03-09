@@ -2,12 +2,12 @@
 Evaluation Module for Failure Mode Classification
 
 Computes metrics, confusion matrices, feature importance,
-and the FULL vs SENSOR_ONLY generalization gap.
+and the GROUND_TRUTH vs SENSOR_ONLY generalization gap.
 """
 
 import os
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 import numpy as np
 import pandas as pd
 import xgboost as xgb
@@ -23,25 +23,14 @@ from sklearn.metrics import (
     confusion_matrix,
     f1_score,
     accuracy_score,
-    precision_score,
-    recall_score,
-    roc_auc_score,
+    roc_auc_score
 )
 from sklearn.preprocessing import LabelEncoder
 
 logger = logging.getLogger(__name__)
 
-
-def evaluate_model(
-    model: xgb.XGBClassifier,
-    X_test: pd.DataFrame,
-    y_test: np.ndarray,
-    label_encoder: LabelEncoder,
-    dataset_name: str = "test",
-    log_to_mlflow: bool = False,
-    run_id: str = None,
-    feature_names: List[str] = None,
-) -> Dict:
+def evaluate_model(model: xgb.XGBClassifier, X_test: pd.DataFrame, y_test: np.ndarray, label_encoder: LabelEncoder,
+    dataset_name: str = "test", log_to_mlflow: bool = False, run_id: str = None, feature_names: List[str] = None) -> Dict:
     """
     Evaluate model and compute classification metrics.
 
@@ -68,29 +57,29 @@ def evaluate_model(
     class_names = list(label_encoder.classes_)
 
     try:
-        roc_auc_macro = roc_auc_score(
-            y_test, y_proba, multi_class='ovr', average='macro'
-        )
+        roc_auc_macro = roc_auc_score(y_test, y_proba, multi_class='ovr', average='macro')
     except ValueError:
         roc_auc_macro = None
 
+    all_labels = list(range(len(class_names)))
     report = classification_report(
         y_test, y_pred,
+        labels=all_labels,
         target_names=class_names,
         zero_division=0,
         output_dict=True,
     )
     report_str = classification_report(
         y_test, y_pred,
+        labels=all_labels,
         target_names=class_names,
         zero_division=0,
     )
 
     cm = confusion_matrix(y_test, y_pred)
 
-    logger.info(f"\n{'='*60}")
+
     logger.info(f"EVALUATION: {dataset_name}")
-    logger.info(f"{'='*60}")
     logger.info(f"Accuracy:     {acc:.4f}")
     logger.info(f"Macro F1:     {macro_f1:.4f}")
     logger.info(f"Weighted F1:  {weighted_f1:.4f}")
@@ -167,63 +156,54 @@ def evaluate_model(
     return results
 
 
-def evaluate_all_vs_sensor_only(
-    model_all: xgb.XGBClassifier,
-    model_sensor: xgb.XGBClassifier,
-    X_test_all: pd.DataFrame,
-    X_test_sensor: pd.DataFrame,
-    y_test: np.ndarray,
-    label_encoder: LabelEncoder,
-) -> Dict:
+def evaluate_ground_truth_vs_sensor_only(model_ground_truth: xgb.XGBClassifier, model_sensor: xgb.XGBClassifier,
+                                         X_test_ground_truth: pd.DataFrame, X_test_sensor: pd.DataFrame, y_test: np.ndarray,
+                                         label_encoder: LabelEncoder) -> Dict:
     """
-    Compare All features mode vs SENSOR_ONLY mode performance.
+    Compare Ground Truth features mode vs SENSOR_ONLY mode performance.
 
     Args:
-        model_all: Model trained with health features and derived features
+        model_ground_truth: Model trained with ground truth features        
         model_sensor: Model trained with sensor-only features
-        X_test_all: Test features including health columns and derived features
-        X_test_sensor: Test features without health columns
+        X_test_ground_truth: Test features including ground truth columns
+        X_test_sensor: Test features without ground truth columns
         y_test: True labels
         label_encoder: For decoding
 
     Returns:
         Dict with both evaluation results and the gap metrics
     """
-    results_all = evaluate_model(
-        model_all, X_test_all, y_test, label_encoder, "all_mode"
+    results_ground_truth = evaluate_model(
+        model_ground_truth, X_test_ground_truth, y_test, label_encoder, "ground_truth_mode"
     )
     results_sensor = evaluate_model(
         model_sensor, X_test_sensor, y_test, label_encoder, "sensor_only_mode"
     )
 
     gap = {
-        'accuracy_gap': results_all['accuracy'] - results_sensor['accuracy'],
-        'macro_f1_gap': results_all['macro_f1'] - results_sensor['macro_f1'],
+        'accuracy_gap': results_ground_truth['accuracy'] - results_sensor['accuracy'],
+        'macro_f1_gap': results_ground_truth['macro_f1'] - results_sensor['macro_f1'],
     }
 
 
-    logger.info("ALL vs SENSOR_ONLY GENERALIZATION GAP")
+    logger.info("GROUND TRUTH vs SENSOR_ONLY GENERALIZATION GAP")
     logger.info(f"Accuracy gap:  {gap['accuracy_gap']:.4f} "
-                f"({results_all['accuracy']:.4f} -> {results_sensor['accuracy']:.4f})")
+                f"({results_ground_truth['accuracy']:.4f} -> {results_sensor['accuracy']:.4f})")
     logger.info(f"Macro F1 gap:  {gap['macro_f1_gap']:.4f} "
-                f"({results_all['macro_f1']:.4f} -> {results_sensor['macro_f1']:.4f})")
+                f"({results_ground_truth['macro_f1']:.4f} -> {results_sensor['macro_f1']:.4f})")
 
     if gap['macro_f1_gap'] > 0.15:
         logger.warning("Large generalization gap (>15%) — model may rely on all features "
                        "not available in production")
 
     return {
-        'all': results_all,
+        'ground_truth': results_ground_truth,
         'sensor_only': results_sensor,
         'gap': gap,
     }
 
 
-def get_feature_importance(
-    model: xgb.XGBClassifier,
-    feature_names: List[str],
-    top_n: int = 20,
-) -> pd.DataFrame:
+def get_feature_importance(model: xgb.XGBClassifier, feature_names: List[str], top_n: int = 20) -> pd.DataFrame:
     """
     Get feature importance from XGBoost model.
 
@@ -248,11 +228,7 @@ def get_feature_importance(
     return fi_df.head(top_n)
 
 
-def plot_confusion_matrix(
-    cm: np.ndarray,
-    class_names: List[str],
-    title: str = "Confusion Matrix",
-) -> plt.Figure:
+def plot_confusion_matrix(cm: np.ndarray, class_names: List[str], title: str = "Confusion Matrix") -> plt.Figure:
     """Generate a confusion matrix heatmap figure."""
     fig, ax = plt.subplots(figsize=(8, 6))
     sns.heatmap(
@@ -266,9 +242,7 @@ def plot_confusion_matrix(
     return fig
 
 
-def plot_feature_importance(
-    fi_df: pd.DataFrame,
-    title: str = "Feature Importance",
+def plot_feature_importance(fi_df: pd.DataFrame,title: str = "Feature Importance",
 ) -> plt.Figure:
     """Generate a horizontal bar chart of feature importances."""
     fig, ax = plt.subplots(figsize=(10, 6))
