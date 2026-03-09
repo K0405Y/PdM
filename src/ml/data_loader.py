@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 
-def _load_table_config() -> Dict:
+def load_table_config() -> Dict:
     with open(os.path.join(_PROJECT_ROOT, "table_config.yaml"), encoding="utf-8") as f:
         return yaml.safe_load(f)
 
@@ -42,7 +42,7 @@ def load_telemetry(engine, equipment_type: str) -> pd.DataFrame:
     Returns:
         DataFrame with all telemetry columns, sorted by equipment_id and sample_time
     """
-    cfg = _load_table_config()
+    cfg = load_table_config()
     eq_cfg = cfg['equipment_types'][equipment_type]
     table = eq_cfg['telemetry']['table']
     eq_id_col = eq_cfg['telemetry']['equipment_id_column']
@@ -70,7 +70,7 @@ def load_failures(engine, equipment_type: str) -> pd.DataFrame:
     Returns:
         DataFrame with failure events
     """
-    cfg = _load_table_config()
+    cfg = load_table_config()
     eq_cfg = cfg['equipment_types'][equipment_type]
     table = eq_cfg['failures']['table']
     eq_id_col = eq_cfg['failures']['equipment_id_column']
@@ -88,7 +88,7 @@ def load_failures(engine, equipment_type: str) -> pd.DataFrame:
 
 def load_equipment_ids(engine, equipment_type: str) -> List[int]:
     """Load active equipment IDs for a given type."""
-    cfg = _load_table_config()
+    cfg = load_table_config()
     mcfg = cfg['equipment_types'][equipment_type]['master']
     table, id_col = mcfg['table'], mcfg['id_column']
 
@@ -104,7 +104,7 @@ def get_sensor_columns(equipment_type: str) -> List[str]:
 
     Returns columns suitable for SENSOR_ONLY mode evaluation.
     """
-    cfg = _load_table_config()
+    cfg = load_table_config()
     eq_cfg = cfg['equipment_types'][equipment_type]['telemetry']
     health_cols = set(eq_cfg.get('health_columns', []))
 
@@ -135,18 +135,13 @@ def get_sensor_columns(equipment_type: str) -> List[str]:
 
 def get_health_columns(equipment_type: str) -> List[str]:
     """Get ground-truth health columns for an equipment type."""
-    cfg = _load_table_config()
+    cfg = load_table_config()
     return cfg['equipment_types'][equipment_type]['telemetry'].get('health_columns', [])
-
-def get_derived_columns(equipment_type: str) -> List[str]:
-    """Get derived feature columns for an equipment type."""
-    cfg = _load_table_config()
-    return cfg['equipment_types'][equipment_type]['telemetry'].get('derived_columns', [])
 
 
 def get_failure_modes(equipment_type: str) -> List[str]:
     """Get valid failure mode codes for an equipment type."""
-    cfg = _load_table_config()
+    cfg = load_table_config()
     modes = cfg.get('failure_modes', {}).get(
         {'turbine': 'gas_turbine', 'compressor': 'compressor', 'pump': 'pump'}[equipment_type],
         []
