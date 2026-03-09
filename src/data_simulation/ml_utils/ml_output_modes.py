@@ -6,10 +6,8 @@ realistic predictive maintenance scenarios where ground-truth health
 indicators are not available in production.
 
 Key Features:
+- ground_truth: All telemetry including health indicators (training)
 - sensor_only: Only measurable sensors (realistic evaluation)
-- full: All telemetry including health (training)
-- delayed_labels: Health labels with configurable delay (labeling lag)
-- derived_features: Pre-computed features for ML pipelines
 
 Reference: Industrial SCADA systems, real-world labeling practices
 """
@@ -18,8 +16,7 @@ import os
 from typing import Dict, List, Optional, Set
 from collections import deque
 from enum import Enum
-from datetime import datetime, timedelta
-import json
+from datetime import datetime
 import yaml
 import numpy as np
 
@@ -43,10 +40,8 @@ def _collect_health_columns(cfg: Dict) -> Set[str]:
 
 class OutputMode(Enum):
     """Data output modes for different use cases."""
-    FULL = "full"                      # All data including ground-truth health
+    GROUND_TRUTH = "ground_truth"      # All data including ground-truth health
     SENSOR_ONLY = "sensor_only"        # Only measurable sensors
-    DELAYED_LABELS = "delayed_labels"  # Labels available after delay
-    DERIVED_FEATURES = "derived_features"  # Include engineered features
 
 
 class FeatureEngineer:
@@ -70,6 +65,15 @@ class FeatureEngineer:
         cfg = _load_config()
         fe_cfg = cfg['feature_engineering']
 
+        # Build reverse lookup: DB column name → state key
+        # so FeatureEngineer works with both simulator records and DB records
+        self._db_to_state: Dict[str, str] = {}
+        for eq_cfg in cfg['equipment_types'].values():
+            mappings = eq_cfg.get('telemetry', {}).get('column_mappings', {})
+            for state_key, db_col in mappings.items():
+                if db_col != state_key:
+                    self._db_to_state[db_col] = state_key
+
         self._vibration_keys = tuple(fe_cfg['vibration_keys'])
         self._temperature_keys = tuple(fe_cfg['temperature_keys'])
         self._speed_key = fe_cfg['speed_key']
@@ -77,18 +81,33 @@ class FeatureEngineer:
         self._pressure_keys = fe_cfg['pressure_keys']
         self._load_keys = fe_cfg['load_keys']
 
-        samples_per_day = int(24 * 60 / sample_interval_min)
-        self._vibration_history = deque(maxlen=samples_per_day * 7)
-        self._temperature_history = deque(maxlen=samples_per_day)
+        self._samples_per_day = int(24 * 60 / sample_interval_min)
+        self._vibration_history = deque(maxlen=self._samples_per_day * 7)
+        self._temperature_history = deque(maxlen=self._samples_per_day)
         self._speed_history = deque(maxlen=int(60 / sample_interval_min))
-        self._efficiency_history = deque(maxlen=samples_per_day * 7)
+        self._efficiency_history = deque(maxlen=self._samples_per_day * 7)
+
+        # Delta tracking (previous values)
+        self._prev_vibration: Optional[float] = None
+        self._prev_temperature: Optional[float] = None
+        self._prev_efficiency: Optional[float] = None
+
+        # EWMA state
+        self._vibration_ewma: Optional[float] = None
+        self._temp_ewma: Optional[float] = None
+        self._ewma_alpha = 0.1
 
     def reset(self):
-        """Clear all rolling buffers."""
+        """Clear all rolling buffers and state."""
         self._vibration_history.clear()
         self._temperature_history.clear()
         self._speed_history.clear()
         self._efficiency_history.clear()
+        self._prev_vibration = None
+        self._prev_temperature = None
+        self._prev_efficiency = None
+        self._vibration_ewma = None
+        self._temp_ewma = None
 
     def compute(self, record: Dict) -> Dict:
         """Compute derived features for a single record.
@@ -138,18 +157,88 @@ class FeatureEngineer:
         else:
             features['efficiency_degradation_rate'] = 0.0
 
-        discharge_key = self._pressure_keys['discharge']
-        suction_key = self._pressure_keys['suction']
-        if discharge_key in record and suction_key in record:
-            suction = record.get(suction_key, 1)
-            if suction > 0:
-                features['pressure_ratio'] = record[discharge_key] / suction
+        discharge = self._resolve(record, self._pressure_keys['discharge'])
+        suction = self._resolve(record, self._pressure_keys['suction'])
+        if discharge is not None and suction is not None and suction > 0:
+            features['pressure_ratio'] = discharge / suction
 
-        speed_key = self._load_keys['speed']
-        target_key = self._load_keys['speed_target']
-        if speed_key in record and target_key in record:
-            if record[target_key] > 0:
-                features['load_factor'] = record[speed_key] / record[target_key]
+        speed_val = self._resolve(record, self._load_keys['speed'])
+        target_val = self._resolve(record, self._load_keys['speed_target'])
+        if speed_val is not None and target_val is not None and target_val > 0:
+            features['load_factor'] = speed_val / target_val
+
+        # Delta (rate of change) features
+        vib = values.get('vibration')
+        temp = values.get('temperature')
+        eff = values.get('efficiency')
+
+        if vib is not None and self._prev_vibration is not None:
+            features['vibration_delta'] = vib - self._prev_vibration
+        else:
+            features['vibration_delta'] = 0.0
+        if vib is not None:
+            self._prev_vibration = vib
+
+        if temp is not None and self._prev_temperature is not None:
+            features['temp_delta'] = temp - self._prev_temperature
+        else:
+            features['temp_delta'] = 0.0
+        if temp is not None:
+            self._prev_temperature = temp
+
+        if eff is not None and self._prev_efficiency is not None:
+            features['efficiency_delta'] = eff - self._prev_efficiency
+        else:
+            features['efficiency_delta'] = 0.0
+        if eff is not None:
+            self._prev_efficiency = eff
+
+        # Rolling min/max features
+        if len(self._vibration_history) >= 2:
+            recent_vib = list(self._vibration_history)[-self._samples_per_day:]
+            features['vibration_max_24h'] = float(np.max(recent_vib))
+        else:
+            features['vibration_max_24h'] = 0.0
+
+        if len(self._temperature_history) >= 2:
+            features['temp_max_24h'] = float(np.max(list(self._temperature_history)))
+        else:
+            features['temp_max_24h'] = 0.0
+
+        if len(self._efficiency_history) >= 2:
+            features['efficiency_min_7d'] = float(np.min(list(self._efficiency_history)))
+        else:
+            features['efficiency_min_7d'] = 0.0
+
+        # EWMA features
+        if vib is not None:
+            if self._vibration_ewma is None:
+                self._vibration_ewma = vib
+            else:
+                self._vibration_ewma = self._ewma_alpha * vib + (1 - self._ewma_alpha) * self._vibration_ewma
+            features['vibration_ewma'] = self._vibration_ewma
+        else:
+            features['vibration_ewma'] = self._vibration_ewma if self._vibration_ewma is not None else 0.0
+
+        if temp is not None:
+            if self._temp_ewma is None:
+                self._temp_ewma = temp
+            else:
+                self._temp_ewma = self._ewma_alpha * temp + (1 - self._ewma_alpha) * self._temp_ewma
+            features['temp_ewma'] = self._temp_ewma
+        else:
+            features['temp_ewma'] = self._temp_ewma if self._temp_ewma is not None else 0.0
+
+        # Cross-sensor interaction features
+        if temp is not None and vib is not None and vib > 0:
+            features['temp_vibration_ratio'] = temp / vib
+        else:
+            features['temp_vibration_ratio'] = 0.0
+
+        if eff is not None and 'load_factor' in features and features['load_factor'] > 0:
+            features['efficiency_load_ratio'] = eff / features['load_factor']
+        else:
+            features['efficiency_load_ratio'] = 0.0
 
         return features
 
@@ -169,24 +258,40 @@ class FeatureEngineer:
             results.append(augmented)
         return results
 
+    def _resolve(self, record: Dict, state_key: str) -> Optional[float]:
+        """Look up a value by state key, falling back to DB column name."""
+        if state_key in record:
+            return record[state_key]
+        # Check all DB column names that map to this state key
+        for db_col, sk in self._db_to_state.items():
+            if sk == state_key and db_col in record:
+                return record[db_col]
+        return None
+
     def _extract_telemetry_values(self, record: Dict) -> Dict:
         """Extract canonical telemetry values from equipment-specific keys."""
         values = {}
 
         for key in self._vibration_keys:
-            if key in record:
-                values['vibration'] = record[key]
+            val = self._resolve(record, key)
+            if val is not None:
+                values['vibration'] = val
                 break
 
-        temps = [record[k] for k in self._temperature_keys
-                 if k in record and isinstance(record[k], (int, float))]
+        temps = []
+        for key in self._temperature_keys:
+            val = self._resolve(record, key)
+            if val is not None and isinstance(val, (int, float)):
+                temps.append(val)
         if temps:
             values['temperature'] = max(temps)
 
-        if self._speed_key in record:
-            values['speed'] = record[self._speed_key]
-        if self._efficiency_key in record:
-            values['efficiency'] = record[self._efficiency_key]
+        speed = self._resolve(record, self._speed_key)
+        if speed is not None:
+            values['speed'] = speed
+        efficiency = self._resolve(record, self._efficiency_key)
+        if efficiency is not None:
+            values['efficiency'] = efficiency
 
         return values
 
@@ -199,35 +304,24 @@ class DataOutputFormatter:
     """
 
     def __init__(self,
-                 output_mode: OutputMode = OutputMode.FULL,
-                 label_delay_hours: int = 168,
+                 output_mode: OutputMode = OutputMode.GROUND_TRUTH,
                  sample_interval_min: int = 5):
         cfg = _load_config()
         self.ground_truth_fields = _collect_health_columns(cfg)
         self.internal_state_fields = set(cfg.get('internal_state_fields', []))
 
         self.output_mode = output_mode
-        self.label_delay_hours = label_delay_hours
-        self.label_buffer = []
         self._feature_engineer = FeatureEngineer(sample_interval_min=sample_interval_min)
 
     def format_record(self,
                      telemetry_record: Dict,
                      timestamp: datetime) -> Optional[Dict]:
         """Format a single telemetry record according to output mode."""
-        if self.output_mode == OutputMode.FULL:
+        if self.output_mode == OutputMode.GROUND_TRUTH:
             return telemetry_record
 
         elif self.output_mode == OutputMode.SENSOR_ONLY:
             return self._format_sensor_only(telemetry_record)
-
-        elif self.output_mode == OutputMode.DELAYED_LABELS:
-            return self._format_delayed_labels(telemetry_record, timestamp)
-
-        elif self.output_mode == OutputMode.DERIVED_FEATURES:
-            formatted = telemetry_record.copy()
-            formatted['features'] = json.dumps(self._feature_engineer.compute(telemetry_record))
-            return formatted
 
         return telemetry_record
 
@@ -242,19 +336,6 @@ class DataOutputFormatter:
         derived = self._feature_engineer.compute(record)
         filtered.update(derived)
         return filtered
-
-    def _format_delayed_labels(self, record: Dict, timestamp: datetime) -> Optional[Dict]:
-        """Health indicators available after configurable delay."""
-        self.label_buffer.append({'timestamp': timestamp, 'record': record.copy()})
-        cutoff_time = timestamp - timedelta(hours=self.label_delay_hours)
-        ready_records = [r for r in self.label_buffer if r['timestamp'] <= cutoff_time]
-
-        if not ready_records:
-            return self._format_sensor_only(record)
-
-        ready = ready_records[0]
-        self.label_buffer.remove(ready)
-        return ready['record']
 
     def _add_realistic_noise(self, record: Dict) -> Dict:
         """Add realistic sensor measurement noise."""
@@ -414,8 +495,8 @@ if __name__ == '__main__':
 
     # Test each output mode
     for mode in OutputMode:
-        print(f"\n--- {mode.value.upper()} MODE ---")
-        formatter = DataOutputFormatter(output_mode=mode)
+        print(f"\n--- {mode.value.upper()} MODE")
+        formatter = DataOutputFormatter(output_mode=mode, sample_interval_min=5)
         formatted = formatter.format_record(mock_record, mock_record['timestamp'])
 
         if formatted:
