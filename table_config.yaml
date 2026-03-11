@@ -299,25 +299,67 @@ maintenance_insert_columns:
 # Server-side derived columns (computed at query time, may evolve)
 derived_columns:
   - operating_state
+  # Trend features (7d, 14d, 30d)
   - vibration_trend_7d
-  - temp_variation_24h
-  - speed_stability
+  - vibration_trend_14d
+  - vibration_trend_30d
   - efficiency_degradation_rate
-  - pressure_ratio
-  - load_factor
+  - efficiency_degradation_rate_14d
+  - efficiency_degradation_rate_30d
+  # Variation features (24h, 7d, 14d)
+  - temp_variation_24h
+  - temp_variation_7d
+  - temp_variation_14d
+  - speed_stability
+  # Rolling min/max (24h, 7d, 14d)
+  - vibration_max_24h
+  - vibration_max_7d
+  - vibration_max_14d
+  - temp_max_24h
+  - temp_max_7d
+  - temp_max_14d
+  - efficiency_min_7d
+  - efficiency_min_14d
+  - efficiency_min_30d
+  # Delta (1st derivative)
   - vibration_delta
   - temp_delta
   - efficiency_delta
-  - vibration_max_24h
-  - temp_max_24h
-  - efficiency_min_7d
+  # Acceleration (2nd derivative)
+  - vibration_acceleration
+  - temp_acceleration
+  - efficiency_acceleration
+  - vibration_trend_acceleration
+  - efficiency_trend_acceleration
+  # EWMA
   - vibration_ewma
   - temp_ewma
+  # Ratios and interactions
+  - pressure_ratio
+  - load_factor
   - temp_vibration_ratio
   - efficiency_load_ratio
+  - vibration_efficiency_ratio
+  - temp_efficiency_ratio
+  - vibration_temp_product
+  - fuel_efficiency_ratio
+  - vibration_speed_ratio
+  - temp_fuel_ratio
+  # Spectral features (FFT-based)
+  - vibration_spectral_entropy
+  - vibration_dominant_freq
+  - vibration_spectral_centroid
+  - temp_spectral_entropy
+  - temp_dominant_freq
+  - temp_spectral_centroid
+  # Failure-mode-specific indicators
+  - bearing_indicator
+  - hgp_indicator
+  - blade_indicator
+  - fuel_indicator
 
 
-# Internal simulator state fields 
+# Internal simulator state fields
 internal_state_fields:
   - operating_mode
   - thermal_stress
@@ -343,6 +385,7 @@ feature_engineering:
   pressure_keys:
     discharge: discharge_pressure
     suction: suction_pressure
+  fuel_flow_key: fuel_flow
   load_keys:
     speed: speed
     speed_target: speed_target
