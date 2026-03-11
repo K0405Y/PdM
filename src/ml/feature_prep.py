@@ -13,7 +13,6 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
-
 from src.ml.data_loader import get_sensor_columns, get_health_columns, load_table_config
 from src.data_simulation.ml_utils import FeatureEngineer
 
@@ -22,7 +21,8 @@ logger = logging.getLogger(__name__)
 NORMAL_LABEL = "NORMAL"
 
 
-def label_telemetry(telemetry: pd.DataFrame, failures: pd.DataFrame, prediction_horizon_hours: float = 72.0) -> pd.DataFrame:
+def label_telemetry(telemetry: pd.DataFrame, failures: pd.DataFrame, 
+                        prediction_horizon_hours: float = 168.0) -> pd.DataFrame:
     """
     Label each telemetry row with the upcoming failure mode or NORMAL.
 
@@ -163,6 +163,51 @@ def impute_features(X: pd.DataFrame, medians: Dict[str, float] = None) -> Tuple[
             X[col] = X[col].fillna(0)
 
     return X, medians if medians else computed_medians
+
+
+def normalize_per_equipment(df: pd.DataFrame, feature_cols: List[str],
+                            label_col: str = 'label',
+                            stats: Dict = None) -> Tuple[pd.DataFrame, Dict]:
+    """
+    Z-score normalize feature columns per equipment using NORMAL-labeled data as baseline.
+
+    Works with both sensor_only and ground_truth feature sets.
+
+    Args:
+        df: DataFrame with equipment_id, label, and feature columns
+        feature_cols: Columns to normalize (sensor + derived + health as applicable)
+        label_col: Label column name
+        stats: Pre-computed per-equipment stats (for test/inference). If None, computes from data.
+
+    Returns:
+        (normalized DataFrame, per-equipment stats dict)
+    """
+    computed_stats = {} if stats is None else None
+    cols_to_norm = [c for c in feature_cols if c in df.columns and c != 'equipment_id'
+                    and c != 'operating_hours']
+
+    for eq_id in df['equipment_id'].unique():
+        eq_mask = df['equipment_id'] == eq_id
+
+        if stats is None:
+            normal_mask = eq_mask & (df[label_col] == NORMAL_LABEL)
+            eq_stats = {}
+            for col in cols_to_norm:
+                mean = df.loc[normal_mask, col].mean()
+                std = df.loc[normal_mask, col].std()
+                eq_stats[col] = (float(mean) if not pd.isna(mean) else 0.0,
+                                 float(std) if not pd.isna(std) and std > 0 else 1.0)
+                df.loc[eq_mask, col] = (df.loc[eq_mask, col] - eq_stats[col][0]) / eq_stats[col][1]
+            computed_stats[eq_id] = eq_stats
+        else:
+            eq_stats = stats.get(eq_id, {})
+            for col in cols_to_norm:
+                if col in eq_stats:
+                    mean, std = eq_stats[col]
+                    df.loc[eq_mask, col] = (df.loc[eq_mask, col] - mean) / std
+
+    logger.info(f"Per-equipment normalization applied to {len(cols_to_norm)} columns")
+    return df, stats if stats is not None else computed_stats
 
 
 def prepare_xy(df: pd.DataFrame,feature_cols: List[str], medians: Dict[str, float] = None) -> Tuple[pd.DataFrame, np.ndarray, LabelEncoder, Dict[str, float]]:
