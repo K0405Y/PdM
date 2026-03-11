@@ -81,18 +81,25 @@ class FeatureEngineer:
         self._pressure_keys = fe_cfg['pressure_keys']
         self._load_keys = fe_cfg['load_keys']
 
+        self._fuel_flow_key = fe_cfg.get('fuel_flow_key', 'fuel_flow')
+
         self._samples_per_day = int(24 * 60 / sample_interval_min)
-        self._vibration_history = deque(maxlen=self._samples_per_day * 7)
-        self._temperature_history = deque(maxlen=self._samples_per_day)
+        self._vibration_history = deque(maxlen=self._samples_per_day * 30)
+        self._temperature_history = deque(maxlen=self._samples_per_day * 30)
         self._speed_history = deque(maxlen=int(60 / sample_interval_min))
-        self._efficiency_history = deque(maxlen=self._samples_per_day * 7)
+        self._efficiency_history = deque(maxlen=self._samples_per_day * 30)
 
         # Delta tracking (previous values)
         self._prev_vibration: Optional[float] = None
         self._prev_temperature: Optional[float] = None
         self._prev_efficiency: Optional[float] = None
 
-        # EWMA state
+        # 2nd derivative tracking (previous deltas)
+        self._prev_vibration_delta: Optional[float] = None
+        self._prev_temp_delta: Optional[float] = None
+        self._prev_efficiency_delta: Optional[float] = None
+
+        # Exponentially weighted moving average state
         self._vibration_ewma: Optional[float] = None
         self._temp_ewma: Optional[float] = None
         self._ewma_alpha = 0.1
@@ -106,6 +113,9 @@ class FeatureEngineer:
         self._prev_vibration = None
         self._prev_temperature = None
         self._prev_efficiency = None
+        self._prev_vibration_delta = None
+        self._prev_temp_delta = None
+        self._prev_efficiency_delta = None
         self._vibration_ewma = None
         self._temp_ewma = None
 
@@ -127,19 +137,50 @@ class FeatureEngineer:
             self._efficiency_history.append(values['efficiency'])
 
         features = {}
+        spd = self._samples_per_day
 
-        if len(self._vibration_history) >= 2:
-            x = np.arange(len(self._vibration_history))
-            coeffs = np.polyfit(x, list(self._vibration_history), 1)
-            features['vibration_trend_7d'] = float(coeffs[0])
+        # Vibration trend features (7d, 14d, 30d)
+        vib_list = list(self._vibration_history)
+        if len(vib_list) >= 2:
+            # 7d trend (use last 7 days of buffer)
+            vib_7d = vib_list[-(spd * 7):] if len(vib_list) > spd * 7 else vib_list
+            x = np.arange(len(vib_7d))
+            features['vibration_trend_7d'] = float(np.polyfit(x, vib_7d, 1)[0])
         else:
             features['vibration_trend_7d'] = 0.0
 
-        if len(self._temperature_history) >= 2:
-            features['temp_variation_24h'] = float(np.std(list(self._temperature_history)))
+        if len(vib_list) >= spd * 14:
+            vib_14d = vib_list[-(spd * 14):]
+            x = np.arange(len(vib_14d))
+            features['vibration_trend_14d'] = float(np.polyfit(x, vib_14d, 1)[0])
+        else:
+            features['vibration_trend_14d'] = features['vibration_trend_7d']
+
+        if len(vib_list) >= spd * 21:
+            x = np.arange(len(vib_list))
+            features['vibration_trend_30d'] = float(np.polyfit(x, vib_list, 1)[0])
+        else:
+            features['vibration_trend_30d'] = features['vibration_trend_14d']
+
+        # Temperature variation features (24h, 7d, 14d)
+        temp_list = list(self._temperature_history)
+        if len(temp_list) >= 2:
+            temp_24h = temp_list[-spd:] if len(temp_list) > spd else temp_list
+            features['temp_variation_24h'] = float(np.std(temp_24h))
         else:
             features['temp_variation_24h'] = 0.0
 
+        if len(temp_list) >= spd * 7:
+            features['temp_variation_7d'] = float(np.std(temp_list[-(spd * 7):]))
+        else:
+            features['temp_variation_7d'] = features['temp_variation_24h']
+
+        if len(temp_list) >= spd * 14:
+            features['temp_variation_14d'] = float(np.std(temp_list[-(spd * 14):]))
+        else:
+            features['temp_variation_14d'] = features['temp_variation_7d']
+
+        # Speed stability
         if len(self._speed_history) >= 2:
             arr = np.array(self._speed_history)
             mean_speed = np.mean(arr)
@@ -150,65 +191,123 @@ class FeatureEngineer:
         else:
             features['speed_stability'] = 0.0
 
-        if len(self._efficiency_history) >= 2:
-            x = np.arange(len(self._efficiency_history))
-            coeffs = np.polyfit(x, list(self._efficiency_history), 1)
-            features['efficiency_degradation_rate'] = float(coeffs[0])
+        # Efficiency degradation rate (7d, 14d, 30d)
+        eff_list = list(self._efficiency_history)
+        if len(eff_list) >= 2:
+            eff_7d = eff_list[-(spd * 7):] if len(eff_list) > spd * 7 else eff_list
+            x = np.arange(len(eff_7d))
+            features['efficiency_degradation_rate'] = float(np.polyfit(x, eff_7d, 1)[0])
         else:
             features['efficiency_degradation_rate'] = 0.0
 
+        if len(eff_list) >= spd * 14:
+            eff_14d = eff_list[-(spd * 14):]
+            x = np.arange(len(eff_14d))
+            features['efficiency_degradation_rate_14d'] = float(np.polyfit(x, eff_14d, 1)[0])
+        else:
+            features['efficiency_degradation_rate_14d'] = features['efficiency_degradation_rate']
+
+        if len(eff_list) >= spd * 21:
+            x = np.arange(len(eff_list))
+            features['efficiency_degradation_rate_30d'] = float(np.polyfit(x, eff_list, 1)[0])
+        else:
+            features['efficiency_degradation_rate_30d'] = features['efficiency_degradation_rate_14d']
+
+        # Pressure ratio
         discharge = self._resolve(record, self._pressure_keys['discharge'])
         suction = self._resolve(record, self._pressure_keys['suction'])
         if discharge is not None and suction is not None and suction > 0:
             features['pressure_ratio'] = discharge / suction
 
+        # Load factor
         speed_val = self._resolve(record, self._load_keys['speed'])
         target_val = self._resolve(record, self._load_keys['speed_target'])
         if speed_val is not None and target_val is not None and target_val > 0:
             features['load_factor'] = speed_val / target_val
 
-        # Delta (rate of change) features
+        # Delta (1st derivative) features
         vib = values.get('vibration')
         temp = values.get('temperature')
         eff = values.get('efficiency')
 
         if vib is not None and self._prev_vibration is not None:
-            features['vibration_delta'] = vib - self._prev_vibration
+            vib_delta = vib - self._prev_vibration
         else:
-            features['vibration_delta'] = 0.0
+            vib_delta = 0.0
+        features['vibration_delta'] = vib_delta
         if vib is not None:
             self._prev_vibration = vib
 
         if temp is not None and self._prev_temperature is not None:
-            features['temp_delta'] = temp - self._prev_temperature
+            temp_delta = temp - self._prev_temperature
         else:
-            features['temp_delta'] = 0.0
+            temp_delta = 0.0
+        features['temp_delta'] = temp_delta
         if temp is not None:
             self._prev_temperature = temp
 
         if eff is not None and self._prev_efficiency is not None:
-            features['efficiency_delta'] = eff - self._prev_efficiency
+            eff_delta = eff - self._prev_efficiency
         else:
-            features['efficiency_delta'] = 0.0
+            eff_delta = 0.0
+        features['efficiency_delta'] = eff_delta
         if eff is not None:
             self._prev_efficiency = eff
 
-        # Rolling min/max features
-        if len(self._vibration_history) >= 2:
-            recent_vib = list(self._vibration_history)[-self._samples_per_day:]
-            features['vibration_max_24h'] = float(np.max(recent_vib))
+        # 2nd derivative (acceleration) features
+        if self._prev_vibration_delta is not None:
+            features['vibration_acceleration'] = vib_delta - self._prev_vibration_delta
+        else:
+            features['vibration_acceleration'] = 0.0
+        self._prev_vibration_delta = vib_delta
+
+        if self._prev_temp_delta is not None:
+            features['temp_acceleration'] = temp_delta - self._prev_temp_delta
+        else:
+            features['temp_acceleration'] = 0.0
+        self._prev_temp_delta = temp_delta
+
+        if self._prev_efficiency_delta is not None:
+            features['efficiency_acceleration'] = eff_delta - self._prev_efficiency_delta
+        else:
+            features['efficiency_acceleration'] = 0.0
+        self._prev_efficiency_delta = eff_delta
+
+        # Trend acceleration: difference between short and long trend slopes
+        features['vibration_trend_acceleration'] = (
+            features['vibration_trend_7d'] - features['vibration_trend_14d']
+        )
+        features['efficiency_trend_acceleration'] = (
+            features['efficiency_degradation_rate'] - features['efficiency_degradation_rate_14d']
+        )
+
+        # Rolling min/max features (24h, 7d, 14d)
+        if len(vib_list) >= 2:
+            features['vibration_max_24h'] = float(np.max(vib_list[-spd:]))
+            features['vibration_max_7d'] = float(np.max(vib_list[-(spd * 7):]))
+            features['vibration_max_14d'] = float(np.max(vib_list[-(spd * 14):]))
         else:
             features['vibration_max_24h'] = 0.0
+            features['vibration_max_7d'] = 0.0
+            features['vibration_max_14d'] = 0.0
 
-        if len(self._temperature_history) >= 2:
-            features['temp_max_24h'] = float(np.max(list(self._temperature_history)))
+        if len(temp_list) >= 2:
+            features['temp_max_24h'] = float(np.max(temp_list[-spd:]))
+            features['temp_max_7d'] = float(np.max(temp_list[-(spd * 7):]))
+            features['temp_max_14d'] = float(np.max(temp_list[-(spd * 14):]))
         else:
             features['temp_max_24h'] = 0.0
+            features['temp_max_7d'] = 0.0
+            features['temp_max_14d'] = 0.0
 
-        if len(self._efficiency_history) >= 2:
-            features['efficiency_min_7d'] = float(np.min(list(self._efficiency_history)))
+        if len(eff_list) >= 2:
+            features['efficiency_min_7d'] = float(np.min(eff_list[-(spd * 7):]))
+            features['efficiency_min_14d'] = float(np.min(eff_list[-(spd * 14):]))
+            features['efficiency_min_30d'] = float(np.min(eff_list))
         else:
             features['efficiency_min_7d'] = 0.0
+            features['efficiency_min_14d'] = 0.0
+            features['efficiency_min_30d'] = 0.0
 
         # EWMA features
         if vib is not None:
@@ -240,7 +339,113 @@ class FeatureEngineer:
         else:
             features['efficiency_load_ratio'] = 0.0
 
+        # New cross-sensor interactions
+        fuel_flow = self._resolve(record, self._fuel_flow_key)
+
+        if vib is not None and eff is not None and eff > 0:
+            features['vibration_efficiency_ratio'] = vib / eff
+        else:
+            features['vibration_efficiency_ratio'] = 0.0
+
+        if temp is not None and eff is not None and eff > 0:
+            features['temp_efficiency_ratio'] = temp / eff
+        else:
+            features['temp_efficiency_ratio'] = 0.0
+
+        if vib is not None and temp is not None:
+            features['vibration_temp_product'] = vib * temp
+        else:
+            features['vibration_temp_product'] = 0.0
+
+        if fuel_flow is not None and eff is not None and eff > 0:
+            features['fuel_efficiency_ratio'] = fuel_flow / eff
+        else:
+            features['fuel_efficiency_ratio'] = 0.0
+
+        speed = values.get('speed')
+        if vib is not None and speed is not None and speed > 0:
+            features['vibration_speed_ratio'] = vib / speed
+        else:
+            features['vibration_speed_ratio'] = 0.0
+
+        if temp is not None and fuel_flow is not None and fuel_flow > 0:
+            features['temp_fuel_ratio'] = temp / fuel_flow
+        else:
+            features['temp_fuel_ratio'] = 0.0
+
+        # Spectral features (24h window)
+        features.update(self._compute_spectral_features(vib_list, 'vibration', spd))
+        features.update(self._compute_spectral_features(temp_list, 'temp', spd))
+
+        # Failure-mode-specific indicator features
+        oil_temp = self._resolve(record, 'oil_temp')
+        vib_peak = self._resolve(record, 'vibration_peak')
+
+        if vib is not None and oil_temp is not None:
+            features['bearing_indicator'] = vib * oil_temp
+        else:
+            features['bearing_indicator'] = 0.0
+
+        if temp is not None and eff is not None:
+            features['hgp_indicator'] = temp * (1.0 - eff)
+        else:
+            features['hgp_indicator'] = 0.0
+
+        if vib is not None and vib_peak is not None and eff is not None:
+            features['blade_indicator'] = vib * vib_peak / max(eff, 0.01)
+        else:
+            features['blade_indicator'] = 0.0
+
+        if fuel_flow is not None and eff is not None:
+            features['fuel_indicator'] = fuel_flow * (1.0 - eff)
+        else:
+            features['fuel_indicator'] = 0.0
+
         return features
+
+    def _compute_spectral_features(self, signal_list: list, prefix: str,
+                                   samples_per_day: int) -> Dict:
+        """Compute FFT-based spectral features from a signal window.
+
+        Args:
+            signal_list: Time-ordered signal values (from deque).
+            prefix: Feature name prefix ('vibration' or 'temp').
+            samples_per_day: Number of samples in one day.
+
+        Returns:
+            Dict with spectral entropy, dominant frequency, and spectral centroid.
+        """
+        result = {
+            f'{prefix}_spectral_entropy': 0.0,
+            f'{prefix}_dominant_freq': 0.0,
+            f'{prefix}_spectral_centroid': 0.0,
+        }
+
+        if len(signal_list) < samples_per_day:
+            return result
+
+        window = np.array(signal_list[-samples_per_day:])
+        # Remove DC component
+        window = window - np.mean(window)
+
+        fft_vals = np.fft.rfft(window)
+        power = np.abs(fft_vals) ** 2
+        total_power = np.sum(power)
+
+        if total_power <= 0:
+            return result
+
+        # Normalized power spectrum (probability distribution)
+        p = power / total_power
+        # Avoid log(0)
+        p_safe = p[p > 0]
+        result[f'{prefix}_spectral_entropy'] = float(-np.sum(p_safe * np.log(p_safe)))
+
+        freqs = np.fft.rfftfreq(len(window))
+        result[f'{prefix}_dominant_freq'] = float(freqs[np.argmax(power)])
+        result[f'{prefix}_spectral_centroid'] = float(np.sum(freqs * p))
+
+        return result
 
     def compute_batch(self, records: List[Dict]) -> List[Dict]:
         """Compute derived features for a batch of time-ordered records.
