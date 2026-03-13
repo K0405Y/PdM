@@ -4,15 +4,12 @@ ML Pipelines Router — Training export, feature windows, label vectors, dataset
 Purpose-built for ML training workflows. These endpoints enforce consistent
 feature engineering, labeling, and data access patterns across all model experiments.
 """
-from typing import List, Optional
-
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-
 from api.dependencies import get_db_session
-from api.config import load_table_config
 from api.utils import TABLE_CONFIG, classify_operating_state, validate_equipment_exists
 from api.schemas.telemetry import EquipmentTypeEnum, OperatingState
 from api.schemas.ml import (
@@ -22,7 +19,7 @@ from api.schemas.ml import (
     FeatureStat, HealthDistribution, ClassBalance, TimeCoverage,
     DatasetStatsResponse,
 )
-from data_simulation.ml_utils import FeatureEngineer
+from ml.feature_prep import FeatureEngineer
 
 router = APIRouter()
 

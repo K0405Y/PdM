@@ -7,8 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from api.dependencies import get_db, get_db_session
 from api.utils import (
-    TABLE_CONFIG, classify_operating_state, row_to_dict,
-    rows_to_dicts, validate_equipment_exists,
+    TABLE_CONFIG, classify_operating_state, validate_equipment_exists,
 )
 from api.schemas.telemetry import (
     EquipmentTypeEnum, BinInterval, OperatingState,
@@ -22,7 +21,6 @@ from ingestion.db_setup import Database
 from data_simulation.physics.environmental_conditions import (
     LocationType, EnvironmentalConditions,
 )
-from datetime import datetime
 
 
 router = APIRouter()

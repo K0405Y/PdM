@@ -42,7 +42,7 @@ class SimulationRequest(BaseModel):
     output_mode: str = Field(
         "ground_truth",
         description="Output mode: ground_truth (training with health indicators), "
-                    "sensor_only (inference testing, no health, adds noise)"
+                    "sensor_only (inference testing, no health)"
     )
     start_time: Optional[datetime] = Field(
         None, description="Simulation start time (ISO 8601). Defaults to now - duration_days.")
