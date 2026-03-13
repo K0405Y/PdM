@@ -305,6 +305,13 @@ cumulative_columns:
   - cummax_egt
   - cum_fuel_flow_increase
   - cummin_efficiency
+  # Harmonic proxy features (discriminate blade rub vs HGP unbalance)
+  - crest_factor_deviation
+  - kurtosis_excess
+  - harmonic_complexity
+  - vib_rms_to_efficiency_ratio
+  - cummax_crest_deviation
+  - cummax_kurtosis_excess
 
 
 # Server-side derived columns (computed at query time, may evolve)
