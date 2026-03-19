@@ -128,15 +128,20 @@ def _get_val_score(model, X_val, y_val, model_type: str) -> float:
         return mean_absolute_error(y_val, model.predict(X_val))
 
 
-def train_health_estimators(X_train: pd.DataFrame, health_train: pd.DataFrame, X_val: pd.DataFrame, 
-                            health_val: pd.DataFrame, equipment_type: str, health_columns: List[str], 
+def train_health_estimators(X_train: pd.DataFrame, health_train: pd.DataFrame, X_val: pd.DataFrame,
+                            health_val: pd.DataFrame, equipment_type: str, health_columns: List[str],
                             model_type: str = 'xgboost', n_cv_folds: int = 5, n_iter: int = 20,
-                            log_to_mlflow: bool = True) -> Tuple[Dict[str, Any], Optional[str], Dict, Dict]:
+                            log_to_mlflow: bool = True,
+                            best_params_override: Optional[Dict[str, Dict]] = None,
+                            groups: Optional[np.ndarray] = None,
+                            ) -> Tuple[Dict[str, Any], Optional[str], Dict, Dict]:
     """
     Train one regressor per health indicator column.
 
     Args:
         model_type: 'xgboost' or 'random_forest'
+        best_params_override: Optional dict mapping health column name to pre-tuned params dict.
+                             Skips CV tuning for columns with overrides.
 
     Returns:
         Tuple of (regressors dict, MLflow run_id, model_ids dict, target_transformers dict)
@@ -148,11 +153,13 @@ def train_health_estimators(X_train: pd.DataFrame, health_train: pd.DataFrame, X
     feature_names = list(X_train.columns)
 
     # GroupKFold on equipment_id
-    groups = X_train['equipment_id'].values
+    if groups is None:
+        groups = X_train['equipment_id'].values
 
     regressors = {}
     model_ids = {}
     target_transformers = {}
+    deferred_metrics = {}  # {col: {metric_name: value}} — logged after all models registered
     run_id = None
 
     if log_to_mlflow:
@@ -202,7 +209,11 @@ def train_health_estimators(X_train: pd.DataFrame, health_train: pd.DataFrame, X
 
         best_params = {}
 
-        if skip_tuning:
+        # Use override params if provided, skip CV
+        if best_params_override and col in best_params_override:
+            best_params = best_params_override[col]
+            print(f"  {col} using override params (skipping CV): {best_params}")
+        elif skip_tuning:
             # Direct training with fixed params (no CV search)
             print(f"  {col} skipping CV tuning (fixed params)")
         else:
@@ -272,14 +283,18 @@ def train_health_estimators(X_train: pd.DataFrame, health_train: pd.DataFrame, X
                 input_example=X_train_float.iloc[:1]
             )
             model_ids[col] = model_info.model_id
-            log_metrics = {f'final_val_mae_{col}': val_mae}
-            if not skip_tuning:
-                log_metrics[f'best_cv_mae_{col}'] = best_score
-            mlflow.log_metrics(log_metrics, model_id=model_info.model_id)
+            col_metrics = {f'final_val_mae_{col}': val_mae}
+            if not skip_tuning and not (best_params_override and col in best_params_override):
+                col_metrics[f'best_cv_mae_{col}'] = best_score
+            deferred_metrics[col] = col_metrics
 
         regressors[col] = final_model
 
+    # Log cv/val metrics AFTER all models are registered to avoid
+    # later models inheriting earlier models' metrics
     if log_to_mlflow:
+        for col, metrics in deferred_metrics.items():
+            mlflow.log_metrics(metrics, model_id=model_ids[col])
         mlflow.end_run()
 
     return regressors, run_id, model_ids, target_transformers
