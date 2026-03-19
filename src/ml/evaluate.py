@@ -338,7 +338,7 @@ def _predict_with_threshold_array(y_proba: np.ndarray, thresholds: np.ndarray) -
     preds[any_above] = np.argmax(margins[any_above], axis=1)
     return preds
 
-def get_feature_importance(model: xgb.XGBModel , feature_names: List[str], top_n: int = 10) -> pd.DataFrame:
+def get_feature_importance(model, feature_names: List[str], top_n: int = 10) -> pd.DataFrame:
     """
     Get feature importance from XGBoost model.
 
