@@ -305,13 +305,6 @@ cumulative_columns:
   - cummax_egt
   - cum_fuel_flow_increase
   - cummin_efficiency
-  # Harmonic proxy features (discriminate blade rub vs HGP unbalance)
-  - crest_factor_deviation
-  - kurtosis_excess
-  - harmonic_complexity
-  - vib_rms_to_efficiency_ratio
-  - cummax_crest_deviation
-  - cummax_kurtosis_excess
 
 
 # Server-side derived columns (computed at query time, may evolve)
@@ -432,6 +425,27 @@ xgb_config:
     gamma: [0, 0.1, 0.3, 0.5, 1.0]
     reg_alpha: [0, 0.01, 0.1, 1.0]
     reg_lambda: [1.0, 2.0, 5.0, 10.0]
+
+
+# CatBoost model configuration
+catboost_config:
+  tuning_distributions:
+    depth: [4, 6, 8, 10]
+    learning_rate: [0.01, 0.03, 0.05, 0.1, 0.2]
+    iterations: [200, 300, 500, 700, 1000]
+    l2_leaf_reg: [1.0, 3.0, 5.0, 10.0]
+    subsample: [0.6, 0.7, 0.8, 0.9]
+    min_data_in_leaf: [1, 5, 10, 20]
+
+
+# RandomForest model configuration
+rf_config:
+  tuning_distributions:
+    n_estimators: [100, 200, 300]
+    max_depth: [8, 10, 15]
+    min_samples_split: [5, 10]
+    min_samples_leaf: [2, 5]
+    max_features: ['sqrt', 0.5]
 
 
 # Failure mode metadata — ML-relevant thresholds, indicators, lead times
