@@ -221,11 +221,19 @@ def evaluate_health_regressors(health_regressors: Dict, X_test: pd.DataFrame, he
             with tempfile.TemporaryDirectory() as tmpdir:
                 for col, metrics in results.items():
                     mid = model_ids.get(col) if model_ids else None
+                    col_regressor = health_regressors[col]
                     mlflow.log_metric(f'{col}_r2', metrics['r2'], model_id=mid)
                     mlflow.log_metric(f'{col}_mae', metrics['mae'], model_id=mid)
                     mlflow.log_metric(f'{col}_rmse', metrics['rmse'], model_id=mid)
+
+                    col_y_true = health_test[col].values
+                    col_y_pred = col_regressor.predict(X_test)
+                    if target_transformers and col in target_transformers:
+                        col_y_pred = target_transformers[col].inverse_transform(col_y_pred.reshape(-1, 1)).ravel()
+                    col_y_pred = np.clip(col_y_pred, 0.0, 1.0)
+
                     fig, ax = plt.subplots(figsize=(6, 6))
-                    ax.scatter(y_true, y_pred, alpha=0.1, s=1)
+                    ax.scatter(col_y_true, col_y_pred, alpha=0.1, s=1)
                     ax.plot([0, 1], [0, 1], 'r--', label='Perfect')
                     ax.set_xlabel('Actual')
                     ax.set_ylabel('Predicted')
@@ -240,7 +248,7 @@ def evaluate_health_regressors(health_regressors: Dict, X_test: pd.DataFrame, he
 
                     #feature importance
                     if feature_names is not None:
-                        fi_df = get_feature_importance(regressor, feature_names)
+                        fi_df = get_feature_importance(col_regressor, feature_names)
                         fi_fig = plot_feature_importance(
                             fi_df,
                             title=f"{col} Feature Importance"
