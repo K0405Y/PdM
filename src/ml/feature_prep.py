@@ -571,27 +571,8 @@ def compute_cumulative_features(df: pd.DataFrame) -> pd.DataFrame:
     egt_col = next((c for c in df.columns if 'egt' in c.lower() or 'exhaust' in c.lower()), None)
     fuel_col = next((c for c in df.columns if 'fuel_flow' in c), None)
 
-    # Detect crest factor and kurtosis columns for harmonic proxy features
-    crest_col = next((c for c in df.columns if 'crest_factor' in c), None)
-    kurtosis_col = next((c for c in df.columns if 'kurtosis' in c), None)
-
     for col_name in cumulative_columns:
         df[col_name] = 0.0
-
-    # Per-row harmonic proxy features (distinguish blade rub vs HGP unbalance)
-    # Pure 1x sinusoid (HGP): crest ≈ √2 ≈ 1.414, kurtosis ≈ 1.5
-    # Multi-harmonic (blade): crest > 1.414, kurtosis > 1.5
-    if 'crest_factor_deviation' in cumulative_columns and crest_col:
-        df['crest_factor_deviation'] = df[crest_col] - 1.414
-
-    if 'kurtosis_excess' in cumulative_columns and kurtosis_col:
-        df['kurtosis_excess'] = df[kurtosis_col] - 1.5
-
-    if 'harmonic_complexity' in cumulative_columns and kurtosis_col and crest_col:
-        df['harmonic_complexity'] = df[kurtosis_col] / df[crest_col].clip(lower=0.01)
-
-    if 'vib_rms_to_efficiency_ratio' in cumulative_columns and vib_rms_col and eff_col:
-        df['vib_rms_to_efficiency_ratio'] = df[vib_rms_col] / (1.0 - df[eff_col]).clip(lower=0.001)
 
     for _, group in df.groupby('equipment_id', sort=False):
         group = group.sort_values('sample_time')
@@ -621,12 +602,6 @@ def compute_cumulative_features(df: pd.DataFrame) -> pd.DataFrame:
 
         if 'cummin_efficiency' in cumulative_columns and eff_col:
             df.loc[sorted_idx, 'cummin_efficiency'] = group[eff_col].cummin().values
-
-        if 'cummax_crest_deviation' in cumulative_columns and 'crest_factor_deviation' in df.columns:
-            df.loc[sorted_idx, 'cummax_crest_deviation'] = df.loc[sorted_idx, 'crest_factor_deviation'].cummax().values
-
-        if 'cummax_kurtosis_excess' in cumulative_columns and 'kurtosis_excess' in df.columns:
-            df.loc[sorted_idx, 'cummax_kurtosis_excess'] = df.loc[sorted_idx, 'kurtosis_excess'].cummax().values
 
     logger.info(f"Computed cumulative features: {cumulative_columns}")
     return df
