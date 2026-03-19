@@ -368,6 +368,20 @@ derived_columns:
   - hgp_indicator
   - blade_indicator
   - fuel_indicator
+  - egt_efficiency_ratio
+  - vibration_shape_factor
+  - vibration_egt_interaction
+
+
+# Regressor indicator columns (instantaneous cross-sensor features for health regression)
+regressor_indicator_columns:
+  - hgp_indicator
+  - blade_indicator
+  - bearing_indicator
+  - fuel_indicator
+  - egt_efficiency_ratio
+  - vibration_shape_factor
+  - vibration_egt_interaction
 
 
 # Internal simulator state fields
@@ -425,17 +439,6 @@ xgb_config:
     gamma: [0, 0.1, 0.3, 0.5, 1.0]
     reg_alpha: [0, 0.01, 0.1, 1.0]
     reg_lambda: [1.0, 2.0, 5.0, 10.0]
-
-
-# CatBoost model configuration
-catboost_config:
-  tuning_distributions:
-    depth: [4, 6, 8, 10]
-    learning_rate: [0.01, 0.03, 0.05, 0.1, 0.2]
-    iterations: [200, 300, 500, 700, 1000]
-    l2_leaf_reg: [1.0, 3.0, 5.0, 10.0]
-    subsample: [0.6, 0.7, 0.8, 0.9]
-    min_data_in_leaf: [1, 5, 10, 20]
 
 
 # RandomForest model configuration

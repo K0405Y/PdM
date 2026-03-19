@@ -356,9 +356,12 @@ class FeatureEngineer:
         features.update(self._compute_spectral_features(vib_list, 'vibration', spd))
         features.update(self._compute_spectral_features(temp_list, 'temp', spd))
 
-        # Failure-mode-specific indicator features
+        # Failure-mode-specific indicator features (physics-informed)
         oil_temp = self._resolve(record, 'oil_temp')
-        vib_peak = self._resolve(record, 'vibration_peak')
+        vib_kurtosis = self._resolve(record, 'vibration_kurtosis')
+        vib_crest = self._resolve(record, 'vibration_crest_factor')
+        kurtosis_val = vib_kurtosis if vib_kurtosis is not None else 3.0
+        crest_val = vib_crest if vib_crest is not None else 1.4
 
         if vib is not None and oil_temp is not None:
             features['bearing_indicator'] = vib * oil_temp
@@ -366,19 +369,35 @@ class FeatureEngineer:
             features['bearing_indicator'] = 0.0
 
         if temp is not None and eff is not None:
-            features['hgp_indicator'] = temp * (1.0 - eff)
+            # HGP: high EGT + efficiency loss + LOW kurtosis (sinusoidal 1x vibration)
+            eff_loss = max(1.0 - eff, 0.001)
+            features['hgp_indicator'] = (temp / 500.0) * eff_loss * (1.0 / max(kurtosis_val, 0.1))
         else:
             features['hgp_indicator'] = 0.0
 
-        if vib is not None and vib_peak is not None and eff is not None:
-            features['blade_indicator'] = vib * vib_peak / max(eff, 0.01)
+        if vib is not None and eff is not None:
+            # Blade: multi-harmonic vibration (high kurtosis & crest factor)
+            features['blade_indicator'] = vib * crest_val * max(kurtosis_val, 0.1) / max(eff, 0.01)
         else:
             features['blade_indicator'] = 0.0
 
         if fuel_flow is not None and eff is not None:
-            features['fuel_indicator'] = fuel_flow * (1.0 - eff)
+            features['fuel_indicator'] = fuel_flow * max(1.0 - eff, 0.001)
         else:
             features['fuel_indicator'] = 0.0
+
+        # Cross-sensor discriminating features (shared with regressor)
+        if temp is not None and eff is not None:
+            features['egt_efficiency_ratio'] = temp / max(eff, 0.01)
+        else:
+            features['egt_efficiency_ratio'] = 0.0
+
+        features['vibration_shape_factor'] = crest_val * max(kurtosis_val, 0.1)
+
+        if vib is not None and temp is not None:
+            features['vibration_egt_interaction'] = vib * (temp / 500.0)
+        else:
+            features['vibration_egt_interaction'] = 0.0
 
         return features
 
@@ -524,6 +543,47 @@ def label_telemetry(telemetry: pd.DataFrame, failures: pd.DataFrame,
     return df
 
 
+def compute_regressor_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute instantaneous indicator features for health regression.
+
+    Unlike compute_derived_features() (classifier), these are simple
+    cross-sensor calculations with no rolling windows or state.
+    """
+    vib_rms = df.get('vibration_rms_mm_s', 0)
+    vib_crest = df.get('vibration_crest_factor', 1.4)
+    vib_kurtosis = df.get('vibration_kurtosis', 3.0)
+    egt = df.get('egt_celsius', 500)
+    eff = df.get('efficiency_fraction', 1.0)
+    oil_temp = df.get('oil_temp_celsius', 90)
+    fuel_flow = df.get('fuel_flow_kg_s', 2.0)
+
+    eff_loss = (1.0 - eff).clip(lower=0.001)
+
+    # HGP indicator: high EGT + efficiency loss + LOW kurtosis (sinusoidal 1x vibration)
+    df['hgp_indicator'] = round((egt / 500.0) * eff_loss * (1.0 / vib_kurtosis.clip(lower=0.1)),2)
+
+    # Blade indicator: high vibration with HIGH kurtosis & crest (multi-harmonic rub)
+    df['blade_indicator'] = round(vib_rms * vib_crest * vib_kurtosis.clip(lower=0.1) / eff.clip(lower=0.01),2)
+
+    # Bearing indicator: vibration × oil temp (friction heating)
+    df['bearing_indicator'] = round(vib_rms * oil_temp,2)
+
+    # Fuel indicator: fuel flow × efficiency loss
+    df['fuel_indicator'] = round(fuel_flow * eff_loss,2)
+
+    # EGT/efficiency ratio (HGP causes more EGT per efficiency drop)
+    df['egt_efficiency_ratio'] = round(egt / eff.clip(lower=0.01),2)
+
+    # Vibration shape factor (high = impulsive = blade, low = sinusoidal = HGP)
+    df['vibration_shape_factor'] = round(vib_crest * vib_kurtosis.clip(lower=0.1),2)
+
+    # Vibration-EGT interaction (high vib + high EGT = HGP thermal unbalance)
+    df['vibration_egt_interaction'] = round(vib_rms * (egt / 500.0),2)
+
+    logger.info(f"Computed {7} regressor indicator features")
+    return df
+
+
 def compute_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     """Compute derived features for a DataFrame using FeatureEngineer.
 
@@ -627,9 +687,13 @@ def select_features(df: pd.DataFrame, equipment_type: str, mode: str = "regresso
     cfg = load_table_config()
 
     if mode == "regressor":
-        # Raw sensors + cumulative features only (no FeatureEngineer derived features)
-        cumulative = [c for c in cfg.get('cumulative_columns', []) if c in df.columns]
-        feature_cols = sensor_cols + cumulative
+        # Raw sensors + regressor-specific indicator features from config
+        regressor_indicator_cols = cfg.get('regressor_indicator_columns', [])
+        # Compute indicators if not already present
+        if regressor_indicator_cols and not all(c in df.columns for c in regressor_indicator_cols):
+            compute_regressor_indicators(df)
+        available_indicators = [c for c in regressor_indicator_cols if c in df.columns]
+        feature_cols = sensor_cols + available_indicators
     else:
         # Classifier mode: sensors + health + derived features
         derived_col_names = [
@@ -642,9 +706,8 @@ def select_features(df: pd.DataFrame, equipment_type: str, mode: str = "regresso
         health_cols = get_health_columns(equipment_type)
         feature_cols = sensor_cols + health_cols + derived_col_names
         
-    # Add equipment_id for fleet-level model
-    feature_cols = ['equipment_id', 'operating_hours'] + [
-        c for c in feature_cols if c not in ('equipment_id', 'operating_hours')
+    feature_cols = ['operating_hours'] + [
+        c for c in feature_cols if c != 'operating_hours'
     ]
 
     # Only keep columns that exist in the DataFrame
@@ -752,7 +815,7 @@ def select_features_by_importance(model, X_val: np.ndarray, y_val: np.ndarray,
 
 def prepare_xy(df: pd.DataFrame,feature_cols: List[str], medians: Dict[str, float] = None) -> Tuple[pd.DataFrame, np.ndarray, LabelEncoder, Dict[str, float]]:
     """
-    Prepare X (features) and y (encoded labels) for XGBoost.
+    Prepare X (features) and y (encoded labels) for modelling.
 
     Args:
         df: Labeled telemetry DataFrame
@@ -875,13 +938,18 @@ def temporal_validation_split(df: pd.DataFrame, val_fraction: float = 0.2) -> Tu
     return pd.concat(train_parts), pd.concat(val_parts)
 
 
-def get_grouped_cv_splitter(X: pd.DataFrame, y: np.ndarray, n_splits: int = 5):
+def get_grouped_cv_splitter(X: pd.DataFrame, y: np.ndarray, n_splits: int = 5,
+                            groups: Optional[np.ndarray] = None):
     """
     Create a StratifiedGroupKFold splitter using equipment_id as groups.
     Prevents data from the same equipment appearing in both train and validation folds.
 
+    Args:
+        groups: Pre-extracted equipment_id array. Falls back to X['equipment_id'] if None.
+
     Returns:
         Tuple of (splitter, groups array)
     """
-    groups = X['equipment_id'].values
+    if groups is None:
+        groups = X['equipment_id'].values
     return StratifiedGroupKFold(n_splits=n_splits), groups
