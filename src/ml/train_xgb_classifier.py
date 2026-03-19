@@ -97,7 +97,8 @@ def setup_mlflow(experiment_name: str = "pdm_failure_classification"):
 
 def train_fleet_model_with_tuning(X_train: pd.DataFrame, y_train: np.ndarray, X_val: pd.DataFrame, y_val: np.ndarray,
                                   label_encoder: LabelEncoder, equipment_type: str, mode: str = "classifier",
-                                  n_cv_folds: int = 5, n_iter: int = 20, param_distributions: Dict = None, log_to_mlflow: bool = True
+                                  n_cv_folds: int = 5, n_iter: int = 20, param_distributions: Dict = None, log_to_mlflow: bool = True,
+                                  groups: Optional[np.ndarray] = None,
                                   ) -> Tuple[xgb.XGBClassifier, Optional[str]]:
     """
     Train a fleet-level XGBoost classifier with hyperparameter tuning via
@@ -138,7 +139,7 @@ def train_fleet_model_with_tuning(X_train: pd.DataFrame, y_train: np.ndarray, X_
         'early_stopping_rounds': cfg_defaults.get('early_stopping_rounds', 20)
     }
 
-    cv_splitter, groups = get_grouped_cv_splitter(X_train, y_train, n_splits=n_cv_folds)
+    cv_splitter, groups = get_grouped_cv_splitter(X_train, y_train, n_splits=n_cv_folds, groups=groups)
     sample_weights = compute_sample_weights(y_train)
 
     run_id = None
