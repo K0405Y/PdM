@@ -700,7 +700,7 @@ def select_features(df: pd.DataFrame, equipment_type: str, mode: str = "regresso
             c for c in cfg.get('derived_columns', [])
             if c != 'operating_state'
         ]
-        if derived_col_names and not all(c in df.columns for c in derived_col_names):
+        if derived_col_names and not any(c in df.columns for c in derived_col_names):
             logger.info("Computing derived features via FeatureEngineer...")
             compute_derived_features(df)
         health_cols = get_health_columns(equipment_type)
