@@ -131,7 +131,7 @@ def _get_val_score(model, X_val, y_val, model_type: str) -> float:
 def train_health_estimators(X_train: pd.DataFrame, health_train: pd.DataFrame, X_val: pd.DataFrame,
                             health_val: pd.DataFrame, equipment_type: str, health_columns: List[str],
                             model_type: str = 'xgboost', n_cv_folds: int = 5, n_iter: int = 20,
-                            log_to_mlflow: bool = True,
+                            log_to_mlflow: bool = True, mode = 'health',
                             best_params_override: Optional[Dict[str, Dict]] = None,
                             groups: Optional[np.ndarray] = None,
                             ) -> Tuple[Dict[str, Any], Optional[str], Dict, Dict]:
@@ -163,7 +163,7 @@ def train_health_estimators(X_train: pd.DataFrame, health_train: pd.DataFrame, X
     run_id = None
 
     if log_to_mlflow:
-        run_name = f"health_{model_type}_{equipment_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        run_name = f"{model_type}_{mode}_{equipment_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         parent_run = mlflow.start_run(run_name=run_name, tags={
             "mlflow.source.name": "src/ml/train_health_estimators.py",
             "mlflow.source.type": "LOCAL",
@@ -278,7 +278,7 @@ def train_health_estimators(X_train: pd.DataFrame, health_train: pd.DataFrame, X
 
             model_info = mlflow.sklearn.log_model(
                 sk_model=final_model,
-                name=f"{col}_model",
+                name=f"{equipment_type}_{col}_model",
                 signature=signature,
                 input_example=X_train_float.iloc[:1]
             )
