@@ -296,92 +296,143 @@ maintenance_insert_columns:
   - repaired_components
 
 
-# Cumulative degradation features (computed per-equipment, used by health regressors)
+# Cumulative degradation features (computed per-equipment)
 cumulative_columns:
-  - cummax_vibration_rms
-  - cummax_vibration_peak
-  - cum_efficiency_loss
-  - lifecycle_position
-  - cummax_egt
-  - cum_fuel_flow_increase
-  - cummin_efficiency
+  turbine:
+    - cummax_vibration_rms
+    - cummax_vibration_peak
+    - cum_efficiency_loss
+    - lifecycle_position
+    - cummax_egt
+    - cum_fuel_flow_increase
+    - cummin_efficiency
+  compressor:
+    - cummax_vibration_rms
+    - cummax_vibration_peak
+    - cum_efficiency_loss
+    - lifecycle_position
+    - cummax_discharge_temp
+    - cummin_surge_margin
+    - cummax_seal_leakage
+  pump:
+    - cummax_vibration_rms
+    - cummax_vibration_peak
+    - cum_efficiency_loss
+    - lifecycle_position
 
 
-# Server-side derived columns (computed at query time, may evolve)
+# Server-side derived columns (computed at query time, per equipment type)
+# Shared features are listed under _shared, then merged with per-type features in code
 derived_columns:
-  - operating_state
-  # Trend features (7d, 14d, 30d)
-  - vibration_trend_7d
-  - vibration_trend_14d
-  - vibration_trend_30d
-  - efficiency_degradation_rate
-  - efficiency_degradation_rate_14d
-  - efficiency_degradation_rate_30d
-  # Variation features (24h, 7d, 14d)
-  - temp_variation_24h
-  - temp_variation_7d
-  - temp_variation_14d
-  - speed_stability
-  # Rolling min/max (24h, 7d, 14d)
-  - vibration_max_24h
-  - vibration_max_7d
-  - vibration_max_14d
-  - temp_max_24h
-  - temp_max_7d
-  - temp_max_14d
-  - efficiency_min_7d
-  - efficiency_min_14d
-  - efficiency_min_30d
-  # Delta (1st derivative)
-  - vibration_delta
-  - temp_delta
-  - efficiency_delta
-  # Acceleration (2nd derivative)
-  - vibration_acceleration
-  - temp_acceleration
-  - efficiency_acceleration
-  - vibration_trend_acceleration
-  - efficiency_trend_acceleration
-  # EWMA
-  - vibration_ewma
-  - temp_ewma
-  # Ratios and interactions
-  - pressure_ratio
-  - load_factor
-  - temp_vibration_ratio
-  - efficiency_load_ratio
-  - vibration_efficiency_ratio
-  - temp_efficiency_ratio
-  - vibration_temp_product
-  - fuel_efficiency_ratio
-  - vibration_speed_ratio
-  - temp_fuel_ratio
-  # Spectral features (FFT-based)
-  - vibration_spectral_entropy
-  - vibration_dominant_freq
-  - vibration_spectral_centroid
-  - temp_spectral_entropy
-  - temp_dominant_freq
-  - temp_spectral_centroid
-  # Failure-mode-specific indicators
-  - bearing_indicator
-  - hgp_indicator
-  - blade_indicator
-  - fuel_indicator
-  - egt_efficiency_ratio
-  - vibration_shape_factor
-  - vibration_egt_interaction
+  _shared:
+    - operating_state
+    # Trend features (7d, 14d, 30d)
+    - vibration_trend_7d
+    - vibration_trend_14d
+    - vibration_trend_30d
+    - efficiency_degradation_rate
+    - efficiency_degradation_rate_14d
+    - efficiency_degradation_rate_30d
+    # Variation features (24h, 7d, 14d)
+    - temp_variation_24h
+    - temp_variation_7d
+    - temp_variation_14d
+    - speed_stability
+    # Rolling min/max (24h, 7d, 14d)
+    - vibration_max_24h
+    - vibration_max_7d
+    - vibration_max_14d
+    - temp_max_24h
+    - temp_max_7d
+    - temp_max_14d
+    - efficiency_min_7d
+    - efficiency_min_14d
+    - efficiency_min_30d
+    # Delta (1st derivative)
+    - vibration_delta
+    - temp_delta
+    - efficiency_delta
+    # Acceleration (2nd derivative)
+    - vibration_acceleration
+    - temp_acceleration
+    - efficiency_acceleration
+    - vibration_trend_acceleration
+    - efficiency_trend_acceleration
+    # EWMA
+    - vibration_ewma
+    - temp_ewma
+    # Shared ratios and interactions
+    - pressure_ratio
+    - load_factor
+    - temp_vibration_ratio
+    - efficiency_load_ratio
+    - vibration_efficiency_ratio
+    - temp_efficiency_ratio
+    - vibration_temp_product
+    - vibration_speed_ratio
+    # Spectral features (FFT-based)
+    - vibration_spectral_entropy
+    - vibration_dominant_freq
+    - vibration_spectral_centroid
+    - temp_spectral_entropy
+    - temp_dominant_freq
+    - temp_spectral_centroid
+    # Shared indicators
+    - blade_indicator
+    - vibration_shape_factor
+
+  turbine:
+    # Turbine-specific ratios
+    - fuel_efficiency_ratio
+    - temp_fuel_ratio
+    # Turbine-specific indicators
+    - bearing_indicator
+    - hgp_indicator
+    - fuel_indicator
+    - egt_efficiency_ratio
+    - vibration_egt_interaction
+
+  compressor:
+    # Compressor-specific ratios
+    - surge_margin_ratio
+    - seal_leakage_indicator
+    - bearing_temp_differential
+    - shaft_orbit_area
+    # Compressor-specific indicators
+    - bearing_indicator
+    - impeller_indicator
+    - seal_indicator
+    - discharge_temp_efficiency_ratio
+    - vibration_temp_interaction
+
+  pump:
+    # Pump reuses turbine-style indicators where applicable
+    - bearing_indicator
+    - vibration_efficiency_ratio
 
 
 # Regressor indicator columns (instantaneous cross-sensor features for health regression)
 regressor_indicator_columns:
-  - hgp_indicator
-  - blade_indicator
-  - bearing_indicator
-  - fuel_indicator
-  - egt_efficiency_ratio
-  - vibration_shape_factor
-  - vibration_egt_interaction
+  turbine:
+    - hgp_indicator
+    - blade_indicator
+    - bearing_indicator
+    - fuel_indicator
+    - egt_efficiency_ratio
+    - vibration_shape_factor
+    - vibration_egt_interaction
+  compressor:
+    - impeller_indicator
+    - blade_indicator
+    - bearing_indicator
+    - seal_indicator
+    - discharge_temp_efficiency_ratio
+    - vibration_shape_factor
+    - vibration_temp_interaction
+  pump:
+    - blade_indicator
+    - bearing_indicator
+    - vibration_shape_factor
 
 
 # Internal simulator state fields
@@ -394,26 +445,48 @@ internal_state_fields:
 
 # Feature engineering key mappings — maps equipment-specific telemetry keys
 # to canonical names used by FeatureEngineer for derived feature computation.
+# Values are state keys (resolved to DB column names via column_mappings).
 feature_engineering:
-  vibration_keys:
-    - vibration_rms       # gas turbine, pump
-    - orbit_amplitude     # compressor
-  temperature_keys:
-    - bearing_temp_de
-    - bearing_temp_nde
-    - fluid_temp
-    - exhaust_gas_temp
-    - oil_temp
-    - discharge_temp
-  speed_key: speed
-  efficiency_key: efficiency
-  pressure_keys:
-    discharge: discharge_pressure
-    suction: suction_pressure
-  fuel_flow_key: fuel_flow
-  load_keys:
-    speed: speed
-    speed_target: speed_target
+  shared:
+    speed_key: speed
+    efficiency_key: efficiency
+    pressure_keys:
+      discharge: discharge_pressure
+      suction: suction_pressure
+    load_keys:
+      speed: speed
+      speed_target: speed_target
+
+  turbine:
+    vibration_keys:
+      - vibration_rms
+    temperature_keys:
+      - exhaust_gas_temp
+      - oil_temp
+    fuel_flow_key: fuel_flow
+
+  compressor:
+    vibration_keys:
+      - orbit_amplitude
+    temperature_keys:
+      - bearing_temp_de
+      - bearing_temp_nde
+      - discharge_temp
+    surge_margin_key: surge_margin
+    seal_leakage_key: primary_seal_leakage
+    shaft_x_key: shaft_x_displacement
+    shaft_y_key: shaft_y_displacement
+    bearing_temp_de_key: bearing_temp_de
+    bearing_temp_nde_key: bearing_temp_nde
+    discharge_temp_key: discharge_temp
+
+  pump:
+    vibration_keys:
+      - vibration_rms
+    temperature_keys:
+      - bearing_temp_de
+      - bearing_temp_nde
+      - fluid_temp
 
 
 # XGBoost model configuration
@@ -453,8 +526,7 @@ rf_config:
 
 # Failure mode metadata — ML-relevant thresholds, indicators, lead times
 failure_modes:
-
-  gas_turbine:
+  turbine:
     - mode_code: F_HGP
       description: "Hot Gas Path Degradation - Combustion liner cracking"
       failure_threshold: 0.45
