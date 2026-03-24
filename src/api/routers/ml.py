@@ -9,6 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+import pandas as pd
+import io
 from api.dependencies import get_db_session
 from api.utils import TABLE_CONFIG, classify_operating_state, validate_equipment_exists
 from api.schemas.telemetry import EquipmentTypeEnum, OperatingState
@@ -150,6 +152,80 @@ def export_training_data(
         "count": len(items),
     }
 
+
+
+# 1b. Bulk Export as Parquet
+@router.get("/{equipment_type}/bulk-export")
+def bulk_export_training_data(
+    equipment_type: EquipmentTypeEnum,
+    start_time: Optional[str] = Query(None),
+    end_time: Optional[str] = Query(None),
+    equipment_ids: Optional[str] = Query(None, description="Comma-separated equipment IDs"),
+    session: Session = Depends(get_db_session),
+):
+    """Export telemetry as a single compressed Parquet file.
+
+    Designed for bulk data transfer to remote environments (Colab, etc.).
+    Parquet is ~5-10x smaller than CSV and preserves column types.
+    Queries in 50k-row chunks to limit server memory usage.
+    """
+
+    config = _get_config(equipment_type.value)
+
+    where_clauses = ["1=1"]
+    params = {}
+
+    if equipment_ids:
+        id_list = [int(x.strip()) for x in equipment_ids.split(",")]
+        where_clauses.append(f"{config['id_col']} = ANY(:eq_ids)")
+        params["eq_ids"] = id_list
+    if start_time:
+        where_clauses.append("sample_time >= :start_time")
+        params["start_time"] = start_time
+    if end_time:
+        where_clauses.append("sample_time <= :end_time")
+        params["end_time"] = end_time
+
+    where = " AND ".join(where_clauses)
+    chunk_size = 50000
+    all_chunks = []
+    after_id = 0
+
+    while True:
+        chunk_params = {**params, "after_id": after_id, "lim": chunk_size}
+        sql = f"""
+            SELECT * FROM {config['telemetry_table']}
+            WHERE {where} AND {config['telemetry_id_col']} > :after_id
+            ORDER BY {config['telemetry_id_col']} ASC
+            LIMIT :lim
+        """
+        result = session.execute(text(sql), chunk_params)
+        columns = list(result.keys())
+        rows = result.fetchall()
+
+        if not rows:
+            break
+
+        all_chunks.append(pd.DataFrame(rows, columns=columns))
+        after_id = rows[-1][columns.index(config['telemetry_id_col'])]
+
+        if len(rows) < chunk_size:
+            break
+
+    if not all_chunks:
+        df = pd.DataFrame()
+    else:
+        df = pd.concat(all_chunks, ignore_index=True)
+
+    buffer = io.BytesIO()
+    df.to_parquet(buffer, index=False, compression="snappy")
+    buffer.seek(0)
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename={equipment_type.value}_bulk.parquet"},
+    )
 
 
 # 2. Feature Window Queries
