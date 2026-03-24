@@ -40,27 +40,40 @@ class FeatureEngineer:
         all_features = fe.compute_batch(records)
     """
 
-    def __init__(self, sample_interval_min: int = 5):
+    def __init__(self, equipment_type: str = "turbine", sample_interval_min: int = 5):
         cfg = load_table_config()
         fe_cfg = cfg['feature_engineering']
+        shared = fe_cfg.get('shared', {})
+        eq_key = 'turbine' if equipment_type in ('turbine', 'gas_turbine') else equipment_type
+        type_cfg = fe_cfg.get(eq_key, {})
 
         # Build reverse lookup: DB column name → state key
         # so FeatureEngineer works with both simulator records and DB records
         self._db_to_state: Dict[str, str] = {}
-        for eq_cfg in cfg['equipment_types'].values():
-            mappings = eq_cfg.get('telemetry', {}).get('column_mappings', {})
+        for eq_cfg_item in cfg['equipment_types'].values():
+            mappings = eq_cfg_item.get('telemetry', {}).get('column_mappings', {})
             for state_key, db_col in mappings.items():
                 if db_col != state_key:
                     self._db_to_state[db_col] = state_key
 
-        self._vibration_keys = tuple(fe_cfg['vibration_keys'])
-        self._temperature_keys = tuple(fe_cfg['temperature_keys'])
-        self._speed_key = fe_cfg['speed_key']
-        self._efficiency_key = fe_cfg['efficiency_key']
-        self._pressure_keys = fe_cfg['pressure_keys']
-        self._load_keys = fe_cfg['load_keys']
+        self._vibration_keys = tuple(type_cfg.get('vibration_keys', []))
+        self._temperature_keys = tuple(type_cfg.get('temperature_keys', []))
+        self._speed_key = shared.get('speed_key', 'speed')
+        self._efficiency_key = shared.get('efficiency_key', 'efficiency')
+        self._pressure_keys = shared.get('pressure_keys', {})
+        self._load_keys = shared.get('load_keys', {})
 
-        self._fuel_flow_key = fe_cfg.get('fuel_flow_key', 'fuel_flow')
+        # Turbine-specific
+        self._fuel_flow_key = type_cfg.get('fuel_flow_key')
+
+        # Compressor-specific
+        self._surge_margin_key = type_cfg.get('surge_margin_key')
+        self._seal_leakage_key = type_cfg.get('seal_leakage_key')
+        self._shaft_x_key = type_cfg.get('shaft_x_key')
+        self._shaft_y_key = type_cfg.get('shaft_y_key')
+        self._bearing_temp_de_key = type_cfg.get('bearing_temp_de_key')
+        self._bearing_temp_nde_key = type_cfg.get('bearing_temp_nde_key')
+        self._discharge_temp_key = type_cfg.get('discharge_temp_key')
 
         self._samples_per_day = int(24 * 60 / sample_interval_min)
         self._vibration_history = deque(maxlen=self._samples_per_day * 30)
@@ -363,8 +376,9 @@ class FeatureEngineer:
         kurtosis_val = vib_kurtosis if vib_kurtosis is not None else 3.0
         crest_val = vib_crest if vib_crest is not None else 1.4
 
-        if vib is not None and oil_temp is not None:
-            features['bearing_indicator'] = vib * oil_temp
+        bearing_temp = oil_temp if oil_temp is not None else self._resolve(record, self._bearing_temp_de_key)
+        if vib is not None and bearing_temp is not None:
+            features['bearing_indicator'] = vib * bearing_temp
         else:
             features['bearing_indicator'] = 0.0
 
@@ -398,6 +412,53 @@ class FeatureEngineer:
             features['vibration_egt_interaction'] = vib * (temp / 500.0)
         else:
             features['vibration_egt_interaction'] = 0.0
+
+        # Compressor-specific derived features
+        surge_margin = self._resolve(record, self._surge_margin_key)
+        seal_leakage = self._resolve(record, self._seal_leakage_key)
+        shaft_x = self._resolve(record, self._shaft_x_key)
+        shaft_y = self._resolve(record, self._shaft_y_key)
+        bearing_temp_de = self._resolve(record, self._bearing_temp_de_key)
+        bearing_temp_nde = self._resolve(record, self._bearing_temp_nde_key)
+        discharge_temp = self._resolve(record, self._discharge_temp_key)
+
+        if surge_margin is not None and eff is not None:
+            features['surge_margin_ratio'] = surge_margin / max(eff, 0.01)
+        else:
+            features['surge_margin_ratio'] = 0.0
+
+        if seal_leakage is not None and eff is not None:
+            features['seal_leakage_indicator'] = seal_leakage * max(1.0 - eff, 0.001)
+        else:
+            features['seal_leakage_indicator'] = 0.0
+
+        if bearing_temp_de is not None and bearing_temp_nde is not None:
+            features['bearing_temp_differential'] = abs(bearing_temp_de - bearing_temp_nde)
+        else:
+            features['bearing_temp_differential'] = 0.0
+
+        if shaft_x is not None and shaft_y is not None:
+            features['shaft_orbit_area'] = abs(shaft_x * shaft_y)
+        else:
+            features['shaft_orbit_area'] = 0.0
+
+        eff_loss = max(1.0 - eff, 0.001) if eff is not None else 0.001
+        if discharge_temp is not None:
+            features['impeller_indicator'] = (discharge_temp / 200.0) * eff_loss * (1.0 / max(kurtosis_val, 0.1))
+            features['discharge_temp_efficiency_ratio'] = discharge_temp / max(eff, 0.01) if eff is not None else 0.0
+        else:
+            features['impeller_indicator'] = 0.0
+            features['discharge_temp_efficiency_ratio'] = 0.0
+
+        if vib is not None and discharge_temp is not None:
+            features['vibration_temp_interaction'] = vib * (discharge_temp / 200.0)
+        else:
+            features['vibration_temp_interaction'] = 0.0
+
+        if seal_leakage is not None:
+            features['seal_indicator'] = seal_leakage * eff_loss
+        else:
+            features['seal_indicator'] = 0.0
 
         return features
 
@@ -543,48 +604,62 @@ def label_telemetry(telemetry: pd.DataFrame, failures: pd.DataFrame,
     return df
 
 
-def compute_regressor_indicators(df: pd.DataFrame) -> pd.DataFrame:
+def compute_regressor_indicators(df: pd.DataFrame, equipment_type: str = "turbine") -> pd.DataFrame:
     """Compute instantaneous indicator features for health regression.
 
     Unlike compute_derived_features() (classifier), these are simple
     cross-sensor calculations with no rolling windows or state.
     """
-    vib_rms = df.get('vibration_rms_mm_s', 0)
-    vib_crest = df.get('vibration_crest_factor', 1.4)
-    vib_kurtosis = df.get('vibration_kurtosis', 3.0)
-    egt = df.get('egt_celsius', 500)
-    eff = df.get('efficiency_fraction', 1.0)
-    oil_temp = df.get('oil_temp_celsius', 90)
-    fuel_flow = df.get('fuel_flow_kg_s', 2.0)
-
+    eff = df['efficiency_fraction']
     eff_loss = (1.0 - eff).clip(lower=0.001)
 
-    # HGP indicator: high EGT + efficiency loss + LOW kurtosis (sinusoidal 1x vibration)
-    df['hgp_indicator'] = round((egt / 500.0) * eff_loss * (1.0 / vib_kurtosis.clip(lower=0.1)),2)
+    if equipment_type == 'turbine':
+        vib_rms = df['vibration_rms_mm_s']
+        vib_crest = df['vibration_crest_factor']
+        vib_kurtosis = df['vibration_kurtosis']
+        egt = df['egt_celsius']
+        oil_temp = df['oil_temp_celsius']
+        fuel_flow = df['fuel_flow_kg_s']
 
-    # Blade indicator: high vibration with HIGH kurtosis & crest (multi-harmonic rub)
-    df['blade_indicator'] = round(vib_rms * vib_crest * vib_kurtosis.clip(lower=0.1) / eff.clip(lower=0.01),2)
+        df['hgp_indicator'] = round((egt / 500.0) * eff_loss * (1.0 / vib_kurtosis.clip(lower=0.1)), 2)
+        df['blade_indicator'] = round(vib_rms * vib_crest * vib_kurtosis.clip(lower=0.1) / eff.clip(lower=0.01), 2)
+        df['bearing_indicator'] = round(vib_rms * oil_temp, 2)
+        df['fuel_indicator'] = round(fuel_flow * eff_loss, 2)
+        df['egt_efficiency_ratio'] = round(egt / eff.clip(lower=0.01), 2)
+        df['vibration_shape_factor'] = round(vib_crest * vib_kurtosis.clip(lower=0.1), 2)
+        df['vibration_egt_interaction'] = round(vib_rms * (egt / 500.0), 2)
+        n_features = 7
 
-    # Bearing indicator: vibration × oil temp (friction heating)
-    df['bearing_indicator'] = round(vib_rms * oil_temp,2)
+    elif equipment_type == 'compressor':
+        vib = df['vibration_amplitude_mm']
+        discharge_temp = df['discharge_temp_celsius']
+        bearing_temp_de = df['bearing_temp_de_celsius']
+        seal_leakage = df['primary_seal_leakage_kg_s']
 
-    # Fuel indicator: fuel flow × efficiency loss
-    df['fuel_indicator'] = round(fuel_flow * eff_loss,2)
+        df['impeller_indicator'] = round((discharge_temp / 200.0) * eff_loss, 2)
+        df['blade_indicator'] = round(vib / eff.clip(lower=0.01), 2)
+        df['bearing_indicator'] = round(vib * bearing_temp_de, 2)
+        df['seal_indicator'] = round(seal_leakage * eff_loss, 2)
+        df['discharge_temp_efficiency_ratio'] = round(discharge_temp / eff.clip(lower=0.01), 2)
+        df['vibration_shape_factor'] = round(vib, 2)
+        df['vibration_temp_interaction'] = round(vib * (discharge_temp / 200.0), 2)
+        n_features = 7
 
-    # EGT/efficiency ratio (HGP causes more EGT per efficiency drop)
-    df['egt_efficiency_ratio'] = round(egt / eff.clip(lower=0.01),2)
+    else:
+        # Pump or other — shared indicators only
+        vib_rms = df['vibration_rms_mm_s']
+        bearing_temp_de = df['bearing_temp_de_celsius']
 
-    # Vibration shape factor (high = impulsive = blade, low = sinusoidal = HGP)
-    df['vibration_shape_factor'] = round(vib_crest * vib_kurtosis.clip(lower=0.1),2)
+        df['blade_indicator'] = round(vib_rms / eff.clip(lower=0.01), 2)
+        df['bearing_indicator'] = round(vib_rms * bearing_temp_de, 2)
+        df['vibration_shape_factor'] = round(vib_rms, 2)
+        n_features = 3
 
-    # Vibration-EGT interaction (high vib + high EGT = HGP thermal unbalance)
-    df['vibration_egt_interaction'] = round(vib_rms * (egt / 500.0),2)
-
-    logger.info(f"Computed {7} regressor indicator features")
+    logger.info(f"Computed {n_features} regressor indicator features for {equipment_type}")
     return df
 
 
-def compute_derived_features(df: pd.DataFrame) -> pd.DataFrame:
+def compute_derived_features(df: pd.DataFrame, equipment_type: str = "turbine") -> pd.DataFrame:
     """Compute derived features for a DataFrame using FeatureEngineer.
 
     Records must be sorted by (equipment_id, sample_time) for correct
@@ -593,7 +668,7 @@ def compute_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         DataFrame with derived feature columns added in-place.
     """
-    fe = FeatureEngineer()
+    fe = FeatureEngineer(equipment_type=equipment_type)
     derived_rows = []
 
     for _, group in df.groupby('equipment_id', sort=False):
@@ -605,31 +680,41 @@ def compute_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     derived_df = pd.DataFrame(derived_rows, index=df.index)
     for col in derived_df.columns:
         df[col] = derived_df[col]
-
     return df
 
 
-def compute_cumulative_features(df: pd.DataFrame) -> pd.DataFrame:
+def compute_cumulative_features(df: pd.DataFrame, equipment_type: str = "turbine") -> pd.DataFrame:
     """Compute per-equipment cumulative degradation features in-place.
 
     These are monotonic proxies for health degradation, useful for
     health indicator regression where raw sensors lack signal above
     the simulator's coupling thresholds.
 
-    Column names are read from ``cumulative_columns`` in table_config.yaml.
+    Column names are read from ``cumulative_columns.<equipment_type>``
+    in table_config.yaml.
     """
     cfg = load_table_config()
-    cumulative_columns = cfg.get('cumulative_columns', [])
+    cum_cfg = cfg.get('cumulative_columns', {})
+
+    # Support per-type dict or legacy flat list
+    if isinstance(cum_cfg, dict):
+        cumulative_columns = cum_cfg.get(equipment_type, [])
+    else:
+        cumulative_columns = cum_cfg
+
     if not cumulative_columns:
-        logger.warning("No cumulative_columns defined in table_config.yaml — skipping")
+        logger.warning(f"No cumulative_columns for '{equipment_type}' in table_config.yaml — skipping")
         return df
 
     # Detect sensor column names dynamically
-    vib_rms_col = next((c for c in df.columns if 'vibration_rms' in c), None)
-    vib_peak_col = next((c for c in df.columns if 'vibration_peak' in c and 'crest' not in c), None)
+    vib_rms_col = next((c for c in df.columns if 'vibration_rms' in c or 'vibration_amplitude' in c), None)
+    vib_peak_col = next((c for c in df.columns if ('vibration_peak' in c and 'crest' not in c) or 'sync_amplitude' in c), None)
     eff_col = next((c for c in df.columns if 'efficiency' in c and 'min' not in c and 'degradation' not in c and 'ratio' not in c and 'load' not in c and 'delta' not in c and 'acceleration' not in c), None)
     egt_col = next((c for c in df.columns if 'egt' in c.lower() or 'exhaust' in c.lower()), None)
     fuel_col = next((c for c in df.columns if 'fuel_flow' in c), None)
+    discharge_temp_col = next((c for c in df.columns if 'discharge_temp' in c), None)
+    surge_margin_col = next((c for c in df.columns if 'surge_margin' in c), None)
+    seal_leakage_col = next((c for c in df.columns if 'primary_seal_leakage' in c), None)
 
     for col_name in cumulative_columns:
         df[col_name] = 0.0
@@ -653,6 +738,7 @@ def compute_cumulative_features(df: pd.DataFrame) -> pd.DataFrame:
             if max_hours > 0:
                 df.loc[sorted_idx, 'lifecycle_position'] = (group['operating_hours'] / max_hours).values
 
+        # Turbine specific
         if 'cummax_egt' in cumulative_columns and egt_col:
             df.loc[sorted_idx, 'cummax_egt'] = group[egt_col].cummax().values
 
@@ -663,7 +749,17 @@ def compute_cumulative_features(df: pd.DataFrame) -> pd.DataFrame:
         if 'cummin_efficiency' in cumulative_columns and eff_col:
             df.loc[sorted_idx, 'cummin_efficiency'] = group[eff_col].cummin().values
 
-    logger.info(f"Computed cumulative features: {cumulative_columns}")
+        # Compressor specific
+        if 'cummax_discharge_temp' in cumulative_columns and discharge_temp_col:
+            df.loc[sorted_idx, 'cummax_discharge_temp'] = group[discharge_temp_col].cummax().values
+
+        if 'cummin_surge_margin' in cumulative_columns and surge_margin_col:
+            df.loc[sorted_idx, 'cummin_surge_margin'] = group[surge_margin_col].cummin().values
+
+        if 'cummax_seal_leakage' in cumulative_columns and seal_leakage_col:
+            df.loc[sorted_idx, 'cummax_seal_leakage'] = group[seal_leakage_col].cummax().values
+
+    logger.info(f"Computed cumulative features for {equipment_type}: {cumulative_columns}")
     return df
 
 
@@ -685,27 +781,36 @@ def select_features(df: pd.DataFrame, equipment_type: str, mode: str = "regresso
     sensor_cols = get_sensor_columns(equipment_type)
 
     cfg = load_table_config()
+    eq_key = equipment_type
 
     if mode == "regressor":
         # Raw sensors + regressor-specific indicator features from config
-        regressor_indicator_cols = cfg.get('regressor_indicator_columns', [])
+        reg_cfg = cfg.get('regressor_indicator_columns', [])
+        if isinstance(reg_cfg, dict):
+            regressor_indicator_cols = reg_cfg.get(eq_key, [])
+        else:
+            regressor_indicator_cols = reg_cfg
         # Compute indicators if not already present
         if regressor_indicator_cols and not all(c in df.columns for c in regressor_indicator_cols):
-            compute_regressor_indicators(df)
+            compute_regressor_indicators(df, equipment_type)
         available_indicators = [c for c in regressor_indicator_cols if c in df.columns]
         feature_cols = sensor_cols + available_indicators
     else:
         # Classifier mode: sensors + health + derived features
-        derived_col_names = [
-            c for c in cfg.get('derived_columns', [])
-            if c != 'operating_state'
-        ]
+        derived_cfg = cfg.get('derived_columns', [])
+        if isinstance(derived_cfg, dict):
+            shared = derived_cfg.get('_shared', [])
+            type_specific = derived_cfg.get(eq_key, [])
+            all_derived = shared + type_specific
+        else:
+            all_derived = derived_cfg
+        derived_col_names = [c for c in all_derived if c != 'operating_state']
         if derived_col_names and not any(c in df.columns for c in derived_col_names):
             logger.info("Computing derived features via FeatureEngineer...")
-            compute_derived_features(df)
+            compute_derived_features(df, equipment_type)
         health_cols = get_health_columns(equipment_type)
         feature_cols = sensor_cols + health_cols + derived_col_names
-        
+
     feature_cols = ['operating_hours'] + [
         c for c in feature_cols if c != 'operating_hours'
     ]
