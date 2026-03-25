@@ -181,6 +181,8 @@ class MasterData:
                     'design_head_kj_kg': random.uniform(7500, 8500),
                     'initial_health_impeller': random.uniform(0.88, 0.98),
                     'initial_health_bearing': random.uniform(0.85, 0.98),
+                    'initial_health_seal_primary': random.uniform(0.90, 0.98),
+                    'initial_health_seal_secondary': random.uniform(0.93, 0.99),
                 }
                 result = session.execute(text(
                     f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "

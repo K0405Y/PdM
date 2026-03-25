@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS master_data.compressors (
     suction_temp_celsius FLOAT DEFAULT 35.0,
     initial_health_impeller FLOAT DEFAULT 0.92,
     initial_health_bearing FLOAT DEFAULT 0.88,
+    initial_health_seal_primary FLOAT DEFAULT 0.95,
+    initial_health_seal_secondary FLOAT DEFAULT 0.98,   
     status VARCHAR(20) DEFAULT 'active',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

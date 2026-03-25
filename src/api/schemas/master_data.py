@@ -104,6 +104,8 @@ class CompressorCreate(BaseModel):
     suction_temp_celsius: float = 35.0
     initial_health_impeller: float = Field(0.92, ge=0.0, le=1.0)
     initial_health_bearing: float = Field(0.88, ge=0.0, le=1.0)
+    initial_health_seal_primary: float = Field(0.95, ge=0.0, le=1.0)
+    initial_health_seal_secondary: float = Field(0.98, ge=0.0, le=1.0)
 
     model_config = {
         "json_schema_extra": {
@@ -117,6 +119,8 @@ class CompressorCreate(BaseModel):
                 "suction_temp_celsius": 38.0,
                 "initial_health_impeller": 0.92,
                 "initial_health_bearing": 0.88,
+                "initial_health_seal_primary": 0.95,
+                "initial_health_seal_secondary": 0.98,
             }]
         }
     }
@@ -148,6 +152,8 @@ class CompressorResponse(BaseModel):
     suction_temp_celsius: Optional[float] = None
     initial_health_impeller: Optional[float] = None
     initial_health_bearing: Optional[float] = None
+    initial_health_seal_primary: Optional[float] = None
+    initial_health_seal_secondary: Optional[float] = None
     status: Optional[EquipmentStatus] = None
 
 
