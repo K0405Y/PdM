@@ -123,6 +123,18 @@ def train_fleet_model_with_tuning(X_train: pd.DataFrame, y_train: np.ndarray, X_
     """
     n_classes = len(label_encoder.classes_)
 
+    # Validate labels are contiguous [0..n_classes-1]; re-encode if not
+    unique_labels = np.unique(y_train)
+    expected_labels = np.arange(n_classes)
+    if not np.array_equal(unique_labels, expected_labels):
+        logger.warning(
+            f"Labels not contiguous 0..{n_classes-1}: got {unique_labels}. Re-encoding."
+        )
+        label_map = {old: new for new, old in enumerate(sorted(unique_labels))}
+        y_train = np.array([label_map[v] for v in y_train])
+        y_val = np.array([label_map[v] for v in y_val])
+        n_classes = len(unique_labels)
+
     cfg = load_table_config().get('xgb_config', {})
 
     if param_distributions is None:
