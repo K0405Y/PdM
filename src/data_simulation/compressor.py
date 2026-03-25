@@ -264,6 +264,20 @@ class DryGasSealModel:
 
         return result
 
+    def leakage(self) -> dict:
+        """Compute leakage and failure status from current health (no degradation)."""
+        result = {'failed_seal': None}
+        for seal_type in self.SEAL_TYPES:
+            health_factor = 1.0 / max(self.health[seal_type], 0.1)
+            leakage = self.base_leakage[seal_type] * health_factor
+
+            if self.health[seal_type] < self.failure_threshold and result['failed_seal'] is None:
+                result['failed_seal'] = seal_type
+
+            result[f'{seal_type}_health'] = self.health[seal_type]
+            result[f'{seal_type}_leakage'] = leakage
+        return result
+
 
 class ShaftOrbitModel:
     """
@@ -424,18 +438,24 @@ class CompressorHealthModel:
         """
         self.health = initial_health or {
             'impeller': 0.92,
-            'bearing': 0.88
+            'bearing': 0.88,
+            'seal_primary': 0.95,
+            'seal_secondary': 0.98
         }
-        
+
         # Degradation parameters (d, a, b) for h(t) = 1 - d - exp(a*t^b)
         self.degradation_params = {
             'impeller': (0.04, -0.28, 0.21),
-            'bearing': (0.06, -0.32, 0.24)
+            'bearing': (0.06, -0.32, 0.24),
+            'seal_primary': (0.03, -0.20, 0.18),
+            'seal_secondary': (0.02, -0.15, 0.15)
         }
-        
+
         self.failure_thresholds = {
             'impeller': 0.42,
-            'bearing': 0.38
+            'bearing': 0.38,
+            'seal_primary': 0.25,
+            'seal_secondary': 0.25
         }
         
         self._init_generators()
@@ -581,8 +601,8 @@ class Compressor:
         seal_health = None
         if initial_health:
             seal_health = {
-                'primary': initial_health.pop('seal_primary', 0.95),
-                'secondary': initial_health.pop('seal_secondary', 0.98)
+                'primary': initial_health.get('seal_primary', 0.95),
+                'secondary': initial_health.get('seal_secondary', 0.98)
             }
 
         # Component models
@@ -780,7 +800,13 @@ class Compressor:
         
         # Efficiency degrades with impeller condition
         self.efficiency = 0.75 + 0.10 * impeller_health
-        
+
+        # Seal degradation causes internal recirculation losses
+        seal_primary_health = health_state.get('seal_primary', 1.0)
+        seal_deg = 1.0 - seal_primary_health
+        self.efficiency *= (1.0 - 0.05 * seal_deg)  # Up to 5% efficiency loss
+        self.discharge_temp += 3.0 * seal_deg        # Up to 3°C from recirculation heating
+
         # Power calculation (simplified)
         mass_flow = self.flow * 0.8  # Approximate mass flow (kg/hr assuming ~0.8 kg/m³)
         self.power = (mass_flow * self.head) / (3600 * self.efficiency)  # kW
@@ -804,6 +830,10 @@ class Compressor:
         # Non-linear friction heating from degraded bearings
         # Scaled so temp stays below trip (110°C) until health < failure threshold (0.38)
         friction_penalty = 25 * bearing_deg + 25 * bearing_deg ** 2
+
+        # Seal degradation compromises buffer gas system, adds heat
+        seal_primary_health = health_state.get('seal_primary', 1.0)
+        friction_penalty += 5.0 * (1.0 - seal_primary_health)
 
         target_de = base_temp + friction_penalty + random.gauss(0, 1)
         target_nde = base_temp + friction_penalty * 0.85 + random.gauss(0, 1)
@@ -911,13 +941,13 @@ class Compressor:
             except:
                 pass
 
-        # 9. Update process conditions
+        # 9. Compute seal leakage from health_model's seal values
+        self.seal_model.health['primary'] = health_state.get('seal_primary', 0.95)
+        self.seal_model.health['secondary'] = health_state.get('seal_secondary', 0.98)
+        seal_state = self.seal_model.leakage()
+
+        # 10. Update process and bearing conditions
         self._update_process(health_state)
-
-        # Update seal condition - returns dict with 'failed_seal'
-        seal_state = self.seal_model.step(severity)
-
-        # Update bearings
         self._update_bearings(health_state)
 
         # 10. Generate vibration metrics
