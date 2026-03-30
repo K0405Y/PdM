@@ -931,6 +931,12 @@ def prepare_xy(df: pd.DataFrame,feature_cols: List[str], medians: Dict[str, floa
         (X, y_encoded, label_encoder, medians)
     """
     X = df[feature_cols].copy()
+
+    # Cast boolean/object columns to numeric (e.g. surge_alarm from DB)
+    for col in X.columns:
+        if X[col].dtype == 'object' or X[col].dtype == 'bool':
+            X[col] = X[col].astype('float64')
+
     X, medians_out = impute_features(X, medians)
 
     le = LabelEncoder()
