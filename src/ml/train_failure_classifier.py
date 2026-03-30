@@ -152,6 +152,9 @@ def train_fleet_model_with_tuning(X_train: pd.DataFrame, y_train: np.ndarray, X_
     }
 
     cv_splitter, groups = get_grouped_cv_splitter(X_train, y_train, n_splits=n_cv_folds, groups=groups)
+    logger.info(f"Using {n_cv_folds}-fold GroupKFold CV with {len(groups)} groups")
+    logger.info(f"Computing sample weights for training data with class distribution: "
+                f"{Counter(y_train)}")
     sample_weights = compute_sample_weights(y_train)
 
     run_id = None
@@ -190,6 +193,18 @@ def train_fleet_model_with_tuning(X_train: pd.DataFrame, y_train: np.ndarray, X_
             X_fold_val = X_train.iloc[val_idx]
             y_fold_val = y_train[val_idx]
             fold_weights = sample_weights[train_idx]
+
+            # Pad possible missing classes with near-zero-weight dummy samples 
+            # so XGBClassifier sees contiguous labels [0..n_classes-1]
+            missing = set(range(n_classes)) - set(np.unique(y_fold_train))
+            if missing:
+                dummy_X = pd.DataFrame(
+                    np.zeros((len(missing), X_fold_train.shape[1])),
+                    columns=X_fold_train.columns,
+                )
+                y_fold_train = np.concatenate([y_fold_train, np.array(sorted(missing))])
+                fold_weights = np.concatenate([fold_weights, np.full(len(missing), 1e-10)])
+                X_fold_train = pd.concat([X_fold_train, dummy_X], ignore_index=True)
 
             model = xgb.XGBClassifier(**fixed_params, **trial_params)
             model.fit(
