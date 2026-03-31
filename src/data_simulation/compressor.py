@@ -801,11 +801,23 @@ class Compressor:
         # Efficiency degrades with impeller condition
         self.efficiency = 0.75 + 0.10 * impeller_health
 
-        # Seal degradation causes internal recirculation losses
+        # Bearing friction losses reduce efficiency
+        bearing_health = health_state.get('bearing', 1.0)
+        bearing_deg = 1.0 - bearing_health
+        self.efficiency *= (1.0 - 0.03 * bearing_deg)  # Up to 3% from parasitic friction
+
+        # Primary seal degradation causes internal recirculation losses
         seal_primary_health = health_state.get('seal_primary', 1.0)
-        seal_deg = 1.0 - seal_primary_health
-        self.efficiency *= (1.0 - 0.05 * seal_deg)  # Up to 5% efficiency loss
-        self.discharge_temp += 3.0 * seal_deg        # Up to 3°C from recirculation heating
+        seal_primary_deg = 1.0 - seal_primary_health
+        self.efficiency *= (1.0 - 0.05 * seal_primary_deg)  # Up to 5% efficiency loss
+        self.discharge_temp += 3.0 * seal_primary_deg        # Up to 3°C from recirculation heating
+
+        # Secondary seal leakage reduces effective discharge pressure and flow
+        seal_secondary_health = health_state.get('seal_secondary', 1.0)
+        seal_secondary_deg = 1.0 - seal_secondary_health
+        self.discharge_pressure *= (1.0 - 0.03 * seal_secondary_deg)  # Up to 3% pressure loss
+        self.flow *= (1.0 - 0.02 * seal_secondary_deg)                # Up to 2% flow loss
+        self.discharge_temp += 2.0 * seal_secondary_deg                # Up to 2°C friction heating
 
         # Power calculation (simplified)
         mass_flow = self.flow * 0.8  # Approximate mass flow (kg/hr assuming ~0.8 kg/m³)
@@ -829,11 +841,13 @@ class Compressor:
 
         # Non-linear friction heating from degraded bearings
         # Scaled so temp stays below trip (110°C) until health < failure threshold (0.38)
-        friction_penalty = 25 * bearing_deg + 25 * bearing_deg ** 2
+        friction_penalty = 25 * bearing_deg + 40 * bearing_deg ** 2
 
         # Seal degradation compromises buffer gas system, adds heat
         seal_primary_health = health_state.get('seal_primary', 1.0)
+        seal_secondary_health = health_state.get('seal_secondary', 1.0)
         friction_penalty += 5.0 * (1.0 - seal_primary_health)
+        friction_penalty += 3.0 * (1.0 - seal_secondary_health)
 
         target_de = base_temp + friction_penalty + random.gauss(0, 1)
         target_nde = base_temp + friction_penalty * 0.85 + random.gauss(0, 1)
