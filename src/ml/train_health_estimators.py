@@ -132,6 +132,7 @@ def train_health_estimators(X_train: pd.DataFrame, health_train: pd.DataFrame, X
                             health_val: pd.DataFrame, equipment_type: str, health_columns: List[str],
                             model_type: str = 'xgboost', n_cv_folds: int = 5, n_iter: int = 20,
                             log_to_mlflow: bool = True, mode = 'health',
+                            use_target_transform: bool = True,
                             best_params_override: Optional[Dict[str, Dict]] = None,
                             groups: Optional[np.ndarray] = None,
                             ) -> Tuple[Dict[str, Any], Optional[str], Dict, Dict]:
@@ -202,10 +203,14 @@ def train_health_estimators(X_train: pd.DataFrame, health_train: pd.DataFrame, X
         groups_col = groups
 
         # Target transformation to spread clustered-near-1.0 distribution
-        qt = QuantileTransformer(output_distribution='normal', n_quantiles=min(1000, len(y_train_raw)))
-        y_train_col = qt.fit_transform(y_train_raw.reshape(-1, 1)).ravel()
-        y_val_col = qt.transform(y_val_raw.reshape(-1, 1)).ravel()
-        target_transformers[col] = qt
+        if use_target_transform:
+            qt = QuantileTransformer(output_distribution='normal', n_quantiles=min(1000, len(y_train_raw)))
+            y_train_col = qt.fit_transform(y_train_raw.reshape(-1, 1)).ravel()
+            y_val_col = qt.transform(y_val_raw.reshape(-1, 1)).ravel()
+            target_transformers[col] = qt
+        else:
+            y_train_col = y_train_raw
+            y_val_col = y_val_raw
 
         best_params = {}
 
