@@ -985,7 +985,7 @@ def temporal_train_test_split(df: pd.DataFrame, test_fraction: float = 0.3) -> T
 
     # Start with the default split point
     split_idx = int(len(df_sorted) * (1 - test_fraction))
-    min_split_idx = int(len(df_sorted) * 0.5)  # never give test more than 50%
+    min_split_idx = int(len(df_sorted) * (1 - test_fraction - 0.05))  # walk at most 5% beyond requested
 
     # Walk split point earlier until all failure modes are in the test set
     while split_idx > min_split_idx:
@@ -1008,7 +1008,7 @@ def temporal_train_test_split(df: pd.DataFrame, test_fraction: float = 0.3) -> T
         mode_in_train = train_df[train_df['label'] == mode]
         if len(mode_in_train) == 0:
             continue
-        n_move = max(1, int(len(mode_in_train) * test_fraction))
+        n_move = min(500, max(1, int(len(mode_in_train) * test_fraction)))
         move_idx = mode_in_train.tail(n_move).index
         test_df = pd.concat([test_df, train_df.loc[move_idx]])
         train_df = train_df.drop(move_idx)
