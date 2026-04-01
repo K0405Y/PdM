@@ -405,7 +405,8 @@ derived_columns:
     # Compressor-specific indicators
     - bearing_indicator
     - impeller_indicator
-    - seal_indicator
+    - primary_seal_indicator
+    - secondary_seal_indicator
     - discharge_temp_efficiency_ratio
     - vibration_temp_interaction
 
@@ -429,7 +430,8 @@ regressor_indicator_columns:
     - impeller_indicator
     - blade_indicator
     - bearing_indicator
-    - seal_indicator
+    - primary_seal_indicator
+    - secondary_seal_indicator
     - discharge_temp_efficiency_ratio
     - vibration_shape_factor
     - vibration_temp_interaction

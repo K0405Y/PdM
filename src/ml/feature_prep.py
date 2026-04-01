@@ -635,15 +635,17 @@ def compute_regressor_indicators(df: pd.DataFrame, equipment_type: str = "turbin
         discharge_temp = df['discharge_temp_celsius']
         bearing_temp_de = df['bearing_temp_de_celsius']
         seal_leakage = df['primary_seal_leakage_kg_s']
+        secondary_seal_leakage = df['secondary_seal_leakage_kg_s']
 
         df['impeller_indicator'] = round((discharge_temp / 200.0) * eff_loss, 2)
         df['blade_indicator'] = round(vib / eff.clip(lower=0.01), 2)
         df['bearing_indicator'] = round(vib * bearing_temp_de, 2)
-        df['seal_indicator'] = round(seal_leakage * eff_loss, 2)
+        df['primary_seal_indicator'] = round(seal_leakage * eff_loss, 2)
+        df['secondary_seal_indicator'] = round(secondary_seal_leakage * eff_loss, 2)
         df['discharge_temp_efficiency_ratio'] = round(discharge_temp / eff.clip(lower=0.01), 2)
         df['vibration_shape_factor'] = round(vib, 2)
         df['vibration_temp_interaction'] = round(vib * (discharge_temp / 200.0), 2)
-        n_features = 7
+        n_features = 8
 
     else:
         # Pump or other — shared indicators only
