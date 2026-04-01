@@ -620,6 +620,7 @@ def compute_regressor_indicators(df: pd.DataFrame, equipment_type: str = "turbin
         egt = df['egt_celsius']
         oil_temp = df['oil_temp_celsius']
         fuel_flow = df['fuel_flow_kg_s']
+        comp_discharge_temp = df['compressor_discharge_temp_celsius']
 
         df['hgp_indicator'] = round((egt / 500.0) * eff_loss * (1.0 / vib_kurtosis.clip(lower=0.1)), 2)
         df['blade_indicator'] = round(vib_rms * vib_crest * vib_kurtosis.clip(lower=0.1) / eff.clip(lower=0.01), 2)
@@ -628,7 +629,11 @@ def compute_regressor_indicators(df: pd.DataFrame, equipment_type: str = "turbin
         df['egt_efficiency_ratio'] = round(egt / eff.clip(lower=0.01), 2)
         df['vibration_shape_factor'] = round(vib_crest * vib_kurtosis.clip(lower=0.1), 2)
         df['vibration_egt_interaction'] = round(vib_rms * (egt / 500.0), 2)
-        n_features = 7
+        # HGP: thermal gradient across engine — rises with HGP degradation (EGT up, compressor unchanged)
+        df['hgp_thermal_indicator'] = round((egt - comp_discharge_temp) / comp_discharge_temp.clip(lower=1.0), 2)
+        # Blade: compressor discharge drops with blade erosion while efficiency also drops
+        df['blade_compression_indicator'] = round(comp_discharge_temp / eff.clip(lower=0.01), 2)
+        n_features = 9
 
     elif equipment_type == 'compressor':
         vib = df['vibration_amplitude_mm']

@@ -278,12 +278,12 @@ class VibrationSignalGenerator:
             for harm in self.FAULT_SIGNATURES['bearing_defect']['harmonics']:
                 signal += fault_amp * np.sin(2 * np.pi * harm * f0 * t)
 
-        # Blade health affects rub signatures
+        # Blade health affects rub signatures — threshold lowered to 0.90 for earlier signal
         blade_health = health_state.get('blade', 1.0)
-        if blade_health < 0.80:
-            blade_deg = 0.80 - blade_health
-            # Non-linear: at health=0.40, fault_amp = 0.4*3 + 0.16*6 = 2.16 mm/s
-            fault_amp = blade_deg * 3.0 + blade_deg ** 2 * 6.0
+        if blade_health < 0.90:
+            blade_deg = 0.90 - blade_health
+            # Non-linear: at health=0.40, fault_amp = 0.5*2.5 + 0.25*5 = 2.5 mm/s
+            fault_amp = blade_deg * 2.5 + blade_deg ** 2 * 5.0
             for harm in self.FAULT_SIGNATURES['blade_rub']['harmonics']:
                 signal += fault_amp * np.sin(2 * np.pi * harm * f0 * t)
 
@@ -557,16 +557,19 @@ class GasTurbine:
         # Calculate efficiency loss from degradation
         blade_health = health_state.get('blade', 1.0)
         hgp_health = health_state.get('hgp', 1.0)
-        self.efficiency = 0.85 + 0.15 * (blade_health * hgp_health)
-        
+        # Decouple: HGP drives thermal loss, blade drives aerodynamic loss
+        thermal_loss = (1.0 - hgp_health) * 0.10
+        aero_loss = (1.0 - blade_health) * 0.05
+        self.efficiency = max(0.85, 1.0 - thermal_loss - aero_loss)
+
         # EGT increases with load and degradation
         load_fraction = self.speed / self.LIMITS['speed_rated']
         base_egt = self.LIMITS['egt_min'] + (
             self.LIMITS['egt_nominal'] - self.LIMITS['egt_min']
         ) * load_fraction
-        
-        # Degradation forces higher firing temps for same output
-        egt_penalty = (2.0 - hgp_health - blade_health) * 30  # Up to 60°C penalty
+
+        # HGP is the dominant EGT driver (combustor/TIT); blade has minor effect
+        egt_penalty = (1.0 - hgp_health) * 50 + (1.0 - blade_health) * 10
         target_egt = base_egt + egt_penalty
         
         self.egt = self._approach(self.egt, target_egt, 0.1)
@@ -594,6 +597,9 @@ class GasTurbine:
         self.compressor_discharge_temp = (self.ambient_temp + 273.15) * (
             pressure_ratio ** 0.286
         ) - 273.15  # Isentropic compression
+
+        # Blade erosion reduces compressor aero work → lower discharge temp (unique blade signal)
+        self.compressor_discharge_temp *= (1.0 - 0.04 * (1.0 - blade_health))
         
     def _approach(self, current: float, target: float, rate: float) -> float:
         """Exponential approach to target value."""

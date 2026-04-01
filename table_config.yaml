@@ -426,6 +426,8 @@ regressor_indicator_columns:
     - egt_efficiency_ratio
     - vibration_shape_factor
     - vibration_egt_interaction
+    - hgp_thermal_indicator
+    - blade_compression_indicator
   compressor:
     - impeller_indicator
     - blade_indicator
