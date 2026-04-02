@@ -36,9 +36,11 @@ class GasTurbineCreate(BaseModel):
     ambient_temp_celsius: float = 25.0
     ambient_pressure_kpa: float = 101.3
     initial_health_hgp: float = Field(0.92, ge=0.0, le=1.0)
-    initial_health_blade: float = Field(0.95, ge=0.0, le=1.0)
+    initial_health_blade_compressor: float = Field(0.95, ge=0.0, le=1.0)
+    initial_health_blade_turbine: float = Field(0.95, ge=0.0, le=1.0)
     initial_health_bearing: float = Field(0.90, ge=0.0, le=1.0)
     initial_health_fuel: float = Field(0.93, ge=0.0, le=1.0)
+    initial_health_compressor_fouling: float = Field(0.98, ge=0.0, le=1.0)
 
     model_config = {
         "json_schema_extra": {
@@ -51,9 +53,11 @@ class GasTurbineCreate(BaseModel):
                 "ambient_temp_celsius": 30.0,
                 "ambient_pressure_kpa": 101.3,
                 "initial_health_hgp": 0.92,
-                "initial_health_blade": 0.95,
+                "initial_health_blade_compressor": 0.95,
+                "initial_health_blade_turbine": 0.95,
                 "initial_health_bearing": 0.90,
                 "initial_health_fuel": 0.93,
+                "initial_health_compressor_fouling": 0.98,
             }]
         }
     }
@@ -85,9 +89,11 @@ class GasTurbineResponse(BaseModel):
     ambient_temp_celsius: Optional[float] = None
     ambient_pressure_kpa: Optional[float] = None
     initial_health_hgp: Optional[float] = None
-    initial_health_blade: Optional[float] = None
+    initial_health_blade_compressor: Optional[float] = None
+    initial_health_blade_turbine: Optional[float] = None
     initial_health_bearing: Optional[float] = None
     initial_health_fuel: Optional[float] = None
+    initial_health_compressor_fouling: Optional[float] = None
     status: Optional[EquipmentStatus] = None
 
 
@@ -106,6 +112,8 @@ class CompressorCreate(BaseModel):
     initial_health_bearing: float = Field(0.88, ge=0.0, le=1.0)
     initial_health_seal_primary: float = Field(0.95, ge=0.0, le=1.0)
     initial_health_seal_secondary: float = Field(0.98, ge=0.0, le=1.0)
+    initial_health_bearing_thrust: float = Field(0.90, ge=0.0, le=1.0)
+    initial_health_rotor_crack: float = Field(0.98, ge=0.0, le=1.0)
 
     model_config = {
         "json_schema_extra": {
@@ -121,6 +129,8 @@ class CompressorCreate(BaseModel):
                 "initial_health_bearing": 0.88,
                 "initial_health_seal_primary": 0.95,
                 "initial_health_seal_secondary": 0.98,
+                "initial_health_bearing_thrust": 0.90,
+                "initial_health_rotor_crack": 0.98,
             }]
         }
     }
@@ -154,6 +164,8 @@ class CompressorResponse(BaseModel):
     initial_health_bearing: Optional[float] = None
     initial_health_seal_primary: Optional[float] = None
     initial_health_seal_secondary: Optional[float] = None
+    initial_health_bearing_thrust: Optional[float] = None
+    initial_health_rotor_crack: Optional[float] = None
     status: Optional[EquipmentStatus] = None
 
 
@@ -172,6 +184,7 @@ class PumpCreate(BaseModel):
     fluid_density_kg_m3: float = 850.0
     npsh_available_m: float = 8.0
     initial_health_impeller: float = Field(0.94, ge=0.0, le=1.0)
+    initial_health_wear_ring: float = Field(0.95, ge=0.0, le=1.0)
     initial_health_seal: float = Field(0.93, ge=0.0, le=1.0)
     initial_health_bearing_de: float = Field(0.90, ge=0.0, le=1.0)
     initial_health_bearing_nde: float = Field(0.92, ge=0.0, le=1.0)
@@ -189,6 +202,7 @@ class PumpCreate(BaseModel):
                 "fluid_density_kg_m3": 870.0,
                 "npsh_available_m": 6.5,
                 "initial_health_impeller": 0.94,
+                "initial_health_wear_ring": 0.95,
                 "initial_health_seal": 0.93,
                 "initial_health_bearing_de": 0.90,
                 "initial_health_bearing_nde": 0.92,
@@ -226,6 +240,7 @@ class PumpResponse(BaseModel):
     fluid_density_kg_m3: Optional[float] = None
     npsh_available_m: Optional[float] = None
     initial_health_impeller: Optional[float] = None
+    initial_health_wear_ring: Optional[float] = None
     initial_health_seal: Optional[float] = None
     initial_health_bearing_de: Optional[float] = None
     initial_health_bearing_nde: Optional[float] = None
