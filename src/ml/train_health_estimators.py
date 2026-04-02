@@ -44,7 +44,7 @@ _MONOTONE_INCREASING = {
 VALID_MODEL_TYPES = ('xgboost', 'random_forest')
 
 # Health columns where monotonic constraints hurt (entangled physics)
-_UNCONSTRAINED_COLUMNS = {'health_hgp', 'health_blade', 'health_bearing', 'seal_health_primary', 'seal_health_secondary'}
+_UNCONSTRAINED_COLUMNS = {'health_hgp', 'health_blade_compressor', 'health_blade_turbine', 'health_bearing', 'seal_health_primary', 'seal_health_secondary'}
 
 
 def _build_monotone_constraints(feature_names: List[str], health_col: str = '') -> Tuple[int, ...]:
