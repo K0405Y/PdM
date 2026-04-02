@@ -79,6 +79,22 @@ class Database:
             logger.info("Database closed")
 
 
+def _tiered_health(i: int, n_total: int, fresh_range, mid_range, late_range) -> float:
+    """Distribute equipment across three health tiers to ensure failure events in simulation window.
+
+    Tier split: ~25% near end-of-life, ~35% mid-life, ~40% fresh.
+    Guarantees slow-onset modes (rotor_crack, comp_fouling, wear_ring) produce enough
+    failure events within the 4,320-hour simulation window for classifier training.
+    """
+    ratio = i / max(n_total - 1, 1)
+    if ratio < 0.25:
+        return random.uniform(*late_range)
+    elif ratio < 0.60:
+        return random.uniform(*mid_range)
+    else:
+        return random.uniform(*fresh_range)
+
+
 class MasterData:
     """Equipment master data seeding and retrieval."""
 
@@ -132,9 +148,13 @@ class MasterData:
                     'location': f"Platform-{i % 3 + 1}",
                     'installed_date': datetime(2024, 1, 1).date() + timedelta(days=random.randint(0, 364)),
                     'initial_health_hgp': random.uniform(0.70, 0.98),
-                    'initial_health_blade': random.uniform(0.70, 0.98),
+                    'initial_health_blade_compressor': random.uniform(0.75, 0.98),
+                    'initial_health_blade_turbine': random.uniform(0.75, 0.98),
                     'initial_health_bearing': random.uniform(0.70, 0.98),
                     'initial_health_fuel': random.uniform(0.70, 0.98),
+                    'initial_health_compressor_fouling': _tiered_health(
+                        i, count, fresh_range=(0.93, 0.99), mid_range=(0.78, 0.88), late_range=(0.65, 0.72)
+                    ),
                 }
                 result = session.execute(text(
                     f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
@@ -183,6 +203,10 @@ class MasterData:
                     'initial_health_bearing': random.uniform(0.85, 0.98),
                     'initial_health_seal_primary': random.uniform(0.90, 0.98),
                     'initial_health_seal_secondary': random.uniform(0.93, 0.99),
+                    'initial_health_bearing_thrust': random.uniform(0.78, 0.95),
+                    'initial_health_rotor_crack': _tiered_health(
+                        i, count, fresh_range=(0.88, 0.97), mid_range=(0.60, 0.75), late_range=(0.42, 0.52)
+                    ),
                 }
                 result = session.execute(text(
                     f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
@@ -245,6 +269,9 @@ class MasterData:
                     'initial_health_seal': random.uniform(0.70, 0.98),
                     'initial_health_bearing_de': random.uniform(0.70, 0.98),
                     'initial_health_bearing_nde': random.uniform(0.70, 0.98),
+                    'initial_health_wear_ring': _tiered_health(
+                        i, count, fresh_range=(0.90, 0.97), mid_range=(0.68, 0.82), late_range=(0.48, 0.58)
+                    ),
                 }
                 result = session.execute(text(
                     f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
