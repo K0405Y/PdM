@@ -122,7 +122,7 @@ class MechanicalSealModel:
         """
         self.health = initial_health
         self.degradation_rate = degradation_rate
-        self.failure_threshold = 0.40
+        self.failure_threshold = 0.30
         self.base_leakage = 0.5
         
     def step(self,
@@ -503,6 +503,11 @@ class Pump:
         # Impeller health
         self.impeller_health = (initial_health or {}).get('impeller', 0.94)
         self.impeller_degradation_rate = 0.00001
+
+        # Wear ring health — clearance increase shifts BEP, drops head/efficiency without vibration rise
+        self.wear_ring_health = (initial_health or {}).get('wear_ring', 0.95)
+        self.wear_ring_degradation_rate = 0.000008  # base rate; accelerates with high bep_deviation
+        self._cavitation_steps = 0  # hold-time counter for sustained cavitation
         
         # Operating state
         self.speed = 0.0
@@ -653,6 +658,23 @@ class Pump:
 
         failed = self.impeller_health < 0.35
         return self.impeller_health, failed
+
+    def _update_wear_ring(self, severity: float) -> tuple:
+        """Update wear ring health and return (health, failed) tuple.
+
+        Clearance increase shifts BEP and drops head/efficiency.
+        Degradation accelerates when bep_deviation exceeds 20% (positive feedback loop).
+        No vibration increase — discriminates from F_IMPELLER and F_BEARING.
+        """
+        if self.speed > 0:
+            bep_deviation = self.hydraulic_model.calculate_bep_deviation(self.flow, self.speed)
+            # Positive feedback: high deviation accelerates ring wear
+            bep_severity_factor = 1.0 + max(0.0, (bep_deviation - 20.0) / 40.0)
+            effective_rate = self.wear_ring_degradation_rate * severity * bep_severity_factor
+            self.wear_ring_health = max(0.0, self.wear_ring_health - effective_rate)
+
+        failed = self.wear_ring_health < 0.35
+        return self.wear_ring_health, failed
     
     def _update_hydraulics(self):
         """Update hydraulic state based on current operating conditions."""
@@ -670,10 +692,13 @@ class Pump:
         self.head = self.hydraulic_model.calculate_head(
             self.flow, self.speed, self.impeller_health
         )
-        
+        # Wear ring clearance loss drops head and efficiency (no vibration increase)
+        self.head *= (1.0 - 0.08 * (1.0 - self.wear_ring_health))
+
         self.efficiency = self.hydraulic_model.calculate_efficiency(
             self.flow, self.speed, self.impeller_health
         )
+        self.efficiency *= (1.0 - 0.06 * (1.0 - self.wear_ring_health))
         
         if self.efficiency > 0:
             self.power = (self.fluid_density * 9.81 * self.flow * self.head) / (self.efficiency * 3600)
@@ -804,6 +829,9 @@ class Pump:
         # Update impeller (with adjusted severity) - returns (health, failed)
         impeller_health, impeller_failed = self._update_impeller(severity)
 
+        # Update wear ring (must run before hydraulics so BEP effects are applied)
+        wear_ring_health, wear_ring_failed = self._update_wear_ring(severity)
+
         # Update hydraulics
         self._update_hydraulics()
 
@@ -867,6 +895,9 @@ class Pump:
         if impeller_failed:
             raise Exception("F_IMPELLER")
 
+        if wear_ring_failed:
+            raise Exception("F_WEAR_RING")
+
         if seal_state.get('failed', False):
             raise Exception("F_SEAL")
 
@@ -890,7 +921,13 @@ class Pump:
         if motor_overload_active:
             bearing_alarm = 'F_MOTOR_OVERLOAD'
 
+        # Cavitation hold-time: only trip after 30 consecutive steps of severe cavitation
+        # Each next_state() call is ~1 second; 30 steps ~ 30 seconds sustained cavitation
         if self.cavitation_model.is_trip_condition(npsh_margin) and self.speed > 0:
+            self._cavitation_steps += 1
+        else:
+            self._cavitation_steps = 0
+        if self._cavitation_steps >= 30:
             raise Exception("F_CAVITATION")
 
         # Update operating hours
@@ -957,6 +994,7 @@ class Pump:
             'bep_deviation': round(self.hydraulic_model.calculate_bep_deviation(self.flow, self.speed), 2),
             'operating_hours': round(self.operating_hours, 2),
             'health_impeller': round(impeller_health, 4),
+            'health_wear_ring': round(wear_ring_health, 4),
             'health_seal': round(seal_state['seal_health'], 4),
             'health_bearing_de': round(bearing_state['drive_end_health'], 4),
             'health_bearing_nde': round(bearing_state['non_drive_end_health'], 4),
@@ -1029,7 +1067,8 @@ def generate_pump_dataset(
             'impeller': random.uniform(0.75, 0.98),
             'seal': random.uniform(0.80, 0.98),
             'bearing_de': random.uniform(0.72, 0.95),
-            'bearing_nde': random.uniform(0.75, 0.96)
+            'bearing_nde': random.uniform(0.75, 0.96),
+            'wear_ring': random.uniform(0.78, 0.98),
         }
         
         pump = Pump(
@@ -1092,7 +1131,8 @@ if __name__ == '__main__':
             'impeller': 0.88,
             'seal': 0.85,
             'bearing_de': 0.82,
-            'bearing_nde': 0.86
+            'bearing_nde': 0.86,
+            'wear_ring': 0.90,
         },
         design_flow=150,
         design_head=80,

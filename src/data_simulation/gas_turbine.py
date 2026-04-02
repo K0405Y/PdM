@@ -4,7 +4,7 @@ Gas Turbine Data Simulator
 This module simulates an industrial gas turbine typical of offshore platforms and 
 LNG facilities. 
 Key Features:
-- Multi-mode degradation: Hot gas path, blade erosion, bearing wear, fuel system fouling
+- Multi-mode degradation
 - Realistic parameter ranges based on industrial standards
 - Physics-inspired degradation trajectories using exponential wear models
 - Thermodynamic performance monitoring simulation
@@ -42,46 +42,56 @@ class GasTurbineHealthModel:
     # Failure mode codes
     FAILURE_MODES = {
         'F_HGP': 'Hot Gas Path Degradation - Combustion liner cracking',
-        'F_BLADE': 'Blade Erosion - Leading edge degradation',
+        'F_BLADE_COMPRESSOR': 'Compressor Blade Fouling/Erosion - Discharge temp loss',
+        'F_BLADE_TURBINE': 'Turbine Blade Rub/Erosion - Tip clearance increase',
         'F_BEARING': 'Bearing Failure - Lubrication/mechanical degradation',
-        'F_FUEL': 'Fuel System Fouling - Nozzle blockage'
+        'F_FUEL': 'Fuel System Fouling - Nozzle blockage',
+        'F_COMPRESSOR_FOULING': 'Compressor Fouling - Airborne deposit buildup',
+        'F_VIB_TRIP': 'High Vibration Trip - Vibration exceeded trip limit',
     }
-    
-    def __init__(self, 
+
+    def __init__(self,
                  initial_health: dict = None,
                  degradation_params: dict = None):
         """
         Initialize health model for all degradation pathways.
-        
+
         Args:
-            initial_health: Dict with keys 'hgp', 'blade', 'bearing', 'fuel'
+            initial_health: Dict with keys 'hgp', 'blade_compressor', 'blade_turbine',
+                           'bearing', 'fuel', 'compressor_fouling'
                            Values between 0.0 (failed) and 1.0 (new)
             degradation_params: Dict of (d, a, b) tuples per mode
         """
         # Default initial health states (slightly degraded from new)
         self.health = initial_health or {
-            'hgp': 0.92,   
-            'blade': 0.95,
-            'bearing': 0.90, 
-            'fuel': 0.93
+            'hgp': 0.92,
+            'blade_compressor': 0.95,
+            'blade_turbine': 0.95,
+            'bearing': 0.90,
+            'fuel': 0.93,
+            'compressor_fouling': 0.98,
         }
-        
+
         # Default degradation parameters (d, a, b) for h(t) = 1 - d - exp(a*t^b)
-        
         # Different rates reflect real-world component lifespans
         self.degradation_params = degradation_params or {
-            'hgp': (0.05, -0.25, 0.22),      
-            'blade': (0.03, -0.30, 0.20),    
-            'bearing': (0.08, -0.35, 0.25),  
-            'fuel': (0.04, -0.20, 0.18)      
+            'hgp':              (0.05, -0.25, 0.22),
+            'blade_compressor': (0.03, -0.30, 0.20),
+            'blade_turbine':    (0.025, -0.28, 0.19),
+            'bearing':          (0.08, -0.35, 0.25),
+            'fuel':             (0.04, -0.20, 0.18),
+            # compressor_fouling: slower onset; reaches threshold ~3,000-4,000 hrs from mid-life start
+            'compressor_fouling':     (0.025, -0.20, 0.18),
         }
-        
+
         # Failure thresholds - below these, component is considered failed
         self.failure_thresholds = {
             'hgp': 0.45,
-            'blade': 0.40,
+            'blade_compressor': 0.40,
+            'blade_turbine': 0.40,
             'bearing': 0.35,
-            'fuel': 0.55
+            'fuel': 0.40,         
+            'compressor_fouling': 0.60,  
         }
         
         # Initialize time-to-failure generators
@@ -278,12 +288,14 @@ class VibrationSignalGenerator:
             for harm in self.FAULT_SIGNATURES['bearing_defect']['harmonics']:
                 signal += fault_amp * np.sin(2 * np.pi * harm * f0 * t)
 
-        # Blade health affects rub signatures — threshold lowered to 0.90 for earlier signal
-        blade_health = health_state.get('blade', 1.0)
-        if blade_health < 0.90:
-            blade_deg = 0.90 - blade_health
+        # Turbine blade rub — tip clearance increase produces [1,3,5,7]x harmonics
+        # Note: BPFO (~4x) overlaps 3x/5x rub at low RPM; signatures separate above ~7,000 RPM
+        # Discriminator: rub is broadband integer harmonics; BPFO is narrowband with sidebands
+        blade_turbine_health = health_state.get('blade_turbine', 1.0)
+        if blade_turbine_health < 0.90:
+            blade_t_deg = 0.90 - blade_turbine_health
             # Non-linear: at health=0.40, fault_amp = 0.5*2.5 + 0.25*5 = 2.5 mm/s
-            fault_amp = blade_deg * 2.5 + blade_deg ** 2 * 5.0
+            fault_amp = blade_t_deg * 2.5 + blade_t_deg ** 2 * 5.0
             for harm in self.FAULT_SIGNATURES['blade_rub']['harmonics']:
                 signal += fault_amp * np.sin(2 * np.pi * harm * f0 * t)
 
@@ -296,7 +308,7 @@ class VibrationSignalGenerator:
             signal += unbal_amp * np.sin(2 * np.pi * f0 * t)
 
         # Add noise floor (instrumentation noise, increases with degradation)
-        avg_health = (bearing_health + blade_health + hgp_health) / 3
+        avg_health = (bearing_health + blade_turbine_health + hgp_health) / 3
         noise_level = 0.05 + 0.15 * (1.0 - avg_health)
         noise = np.random.normal(0, noise_level, n_samples)
         signal += noise
@@ -554,13 +566,17 @@ class GasTurbine:
             self.compressor_discharge_pressure = self.ambient_pressure
             return
             
-        # Calculate efficiency loss from degradation
-        blade_health = health_state.get('blade', 1.0)
+        # Decouple efficiency losses by component:
+        #   HGP           → thermal loss (combustor/TIT degradation)
+        #   blade_turbine → aerodynamic loss (tip clearance increase)
+        #   compressor_fouling  → compressor aero loss (airborne deposit buildup)
         hgp_health = health_state.get('hgp', 1.0)
-        # Decouple: HGP drives thermal loss, blade drives aerodynamic loss
+        blade_turbine_health = health_state.get('blade_turbine', 1.0)
+        compressor_fouling_health = health_state.get('compressor_fouling', 1.0)
         thermal_loss = (1.0 - hgp_health) * 0.10
-        aero_loss = (1.0 - blade_health) * 0.05
-        self.efficiency = max(0.85, 1.0 - thermal_loss - aero_loss)
+        aero_loss = (1.0 - blade_turbine_health) * 0.05
+        fouling_loss = (1.0 - compressor_fouling_health) * 0.08
+        self.efficiency = max(0.85, 1.0 - thermal_loss - aero_loss - fouling_loss)
 
         # EGT increases with load and degradation
         load_fraction = self.speed / self.LIMITS['speed_rated']
@@ -568,38 +584,42 @@ class GasTurbine:
             self.LIMITS['egt_nominal'] - self.LIMITS['egt_min']
         ) * load_fraction
 
-        # HGP is the dominant EGT driver (combustor/TIT); blade has minor effect
-        egt_penalty = (1.0 - hgp_health) * 50 + (1.0 - blade_health) * 10
+        # HGP is dominant EGT driver; turbine blade has minor effect
+        # Fouling does NOT raise EGT — key discriminator (deposits are upstream of combustor)
+        egt_penalty = (1.0 - hgp_health) * 50 + (1.0 - blade_turbine_health) * 10
         target_egt = base_egt + egt_penalty
-        
+
         self.egt = self._approach(self.egt, target_egt, 0.1)
-        
+
         # Fuel flow correlates with load and inverse of efficiency
         base_fuel = self.LIMITS['fuel_flow_min'] + (
             self.LIMITS['fuel_flow_max'] - self.LIMITS['fuel_flow_min']
         ) * load_fraction
-        
+
         fuel_health = health_state.get('fuel', 1.0)
         self.fuel_flow = base_fuel / (self.efficiency * fuel_health)
-        
+
         # Oil temperature correlates with load and bearing health
         bearing_health = health_state.get('bearing', 1.0)
         target_oil = self.LIMITS['oil_temp_min'] + (
             self.LIMITS['oil_temp_nominal'] - self.LIMITS['oil_temp_min']
         ) * load_fraction
         target_oil += (1.0 - bearing_health) * 25  # Friction heating
-        
+
         self.oil_temp = self._approach(self.oil_temp, target_oil, 0.05)
-        
+
         # Compressor discharge (simplified model)
         pressure_ratio = 10 + 5 * load_fraction  # Typical for industrial GT
+        # Fouling reduces pressure ratio (deposits restrict flow area)
+        pressure_ratio *= (1.0 - 0.06 * (1.0 - compressor_fouling_health))
         self.compressor_discharge_pressure = self.ambient_pressure * pressure_ratio
         self.compressor_discharge_temp = (self.ambient_temp + 273.15) * (
             pressure_ratio ** 0.286
         ) - 273.15  # Isentropic compression
 
-        # Blade erosion reduces compressor aero work → lower discharge temp (unique blade signal)
-        self.compressor_discharge_temp *= (1.0 - 0.04 * (1.0 - blade_health))
+        # Compressor blade erosion reduces discharge temp (unique blade_compressor signal)
+        blade_compressor_health = health_state.get('blade_compressor', 1.0)
+        self.compressor_discharge_temp *= (1.0 - 0.04 * (1.0 - blade_compressor_health))
         
     def _approach(self, current: float, target: float, rate: float) -> float:
         """Exponential approach to target value."""
@@ -664,7 +684,7 @@ class GasTurbine:
                     stress_factor=severity,
                     timestamp=self.current_timestamp,
                     operating_hours=self.operating_hours,
-                    component_list=['hgp', 'blade', 'bearing', 'fuel']
+                    component_list=['hgp', 'blade_compressor', 'blade_turbine', 'bearing', 'fuel', 'compressor_fouling']
                 )
                 # Propagate existing faults
                 self.fault_sim.propagate_faults(1/3600, severity)
@@ -704,6 +724,8 @@ class GasTurbine:
         self._update_thermodynamics(health_state)
 
         # 10. Generate vibration signal and compute metrics
+        bpfo_order = 0.0
+        bpfi_order = 0.0
         if self.use_enhanced_vibration:
             try:
                 vib_signal, vib_metrics = self.vib_generator_enhanced.generate_bearing_vibration(
@@ -715,6 +737,11 @@ class GasTurbine:
                 vib_peak = vib_metrics.get('peak', 0)
                 vib_crest = vib_metrics.get('crest_factor', 0)
                 vib_kurtosis = vib_metrics.get('kurtosis', 0)
+                # Convert bearing defect frequencies to speed-invariant order ratios
+                shaft_freq = self.speed / 60.0
+                if shaft_freq > 0:
+                    bpfo_order = round(vib_metrics.get('bpfo_freq', 0) / shaft_freq, 3)
+                    bpfi_order = round(vib_metrics.get('bpfi_freq', 0) / shaft_freq, 3)
             except:
                 # Fallback to base vibration generator
                 vib_signal = self.vib_generator.generate(
@@ -792,15 +819,20 @@ class GasTurbine:
             'efficiency': round(self.efficiency, 4),
             'operating_hours': round(self.operating_hours, 2),
             'health_hgp': round(health_state['hgp'], 4),
-            'health_blade': round(health_state['blade'], 4),
+            'health_blade_compressor': round(health_state.get('blade_compressor', 0.95), 4),
+            'health_blade_turbine': round(health_state.get('blade_turbine', 0.95), 4),
             'health_bearing': round(health_state['bearing'], 4),
             'health_fuel': round(health_state['fuel'], 4),
+            'health_compressor_fouling': round(health_state.get('compressor_fouling', 0.98), 4),
         }
-        
+
         # Add enhanced vibration metrics if available
         if self.use_enhanced_vibration and vib_crest > 0:
             state['vibration_crest_factor'] = round(vib_crest, 3)
             state['vibration_kurtosis'] = round(vib_kurtosis, 3)
+            if bpfo_order > 0:
+                state['bpfo_order'] = bpfo_order
+                state['bpfi_order'] = bpfi_order
         
         # Add fault information if enabled
         if self.use_faults:
@@ -862,9 +894,11 @@ def generate_turbine_dataset(
         # Random initial health to get varied failure times
         initial_health = {
             'hgp': random.uniform(0.75, 0.98),
-            'blade': random.uniform(0.80, 0.98),
+            'blade_compressor': random.uniform(0.80, 0.98),
+            'blade_turbine': random.uniform(0.80, 0.98),
             'bearing': random.uniform(0.70, 0.95),
-            'fuel': random.uniform(0.75, 0.98)
+            'fuel': random.uniform(0.75, 0.98),
+            'compressor_fouling': random.uniform(0.85, 0.99),
         }
         
         turbine = GasTurbine(machine_id, initial_health)
@@ -916,9 +950,11 @@ if __name__ == '__main__':
         name="GT-001",
         initial_health={
             'hgp': 0.85,
-            'blade': 0.90,
+            'blade_compressor': 0.90,
+            'blade_turbine': 0.90,
             'bearing': 0.80,
-            'fuel': 0.88
+            'fuel': 0.88,
+            'compressor_fouling': 0.95,
         }
     )
     

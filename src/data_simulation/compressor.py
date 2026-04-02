@@ -436,26 +436,34 @@ class CompressorHealthModel:
         Args:
             initial_health: Dict with 'impeller', 'bearing' health values
         """
-        self.health = initial_health or {
+        _defaults = {
             'impeller': 0.92,
             'bearing': 0.88,
             'seal_primary': 0.95,
-            'seal_secondary': 0.98
+            'seal_secondary': 0.98,
+            'bearing_thrust': 0.90,
+            'rotor_crack': 0.98,
         }
+        self.health = {**_defaults, **(initial_health or {})}
 
         # Degradation parameters (d, a, b) for h(t) = 1 - d - exp(a*t^b)
         self.degradation_params = {
             'impeller': (0.04, -0.28, 0.21),
             'bearing': (0.06, -0.32, 0.24),
             'seal_primary': (0.03, -0.20, 0.18),
-            'seal_secondary': (0.02, -0.15, 0.15)
+            'seal_secondary': (0.02, -0.15, 0.15),
+            'bearing_thrust': (0.05, -0.30, 0.22),
+            # rotor_crack: very slow onset — seeded near-EoL in db_setup for training data
+            'rotor_crack': (0.01, -0.10, 0.15),
         }
 
         self.failure_thresholds = {
             'impeller': 0.42,
             'bearing': 0.38,
             'seal_primary': 0.25,
-            'seal_secondary': 0.25
+            'seal_secondary': 0.25,
+            'bearing_thrust': 0.35,
+            'rotor_crack': 0.30,
         }
         
         self._init_generators()
@@ -849,9 +857,13 @@ class Compressor:
         friction_penalty += 5.0 * (1.0 - seal_primary_health)
         friction_penalty += 3.0 * (1.0 - seal_secondary_health)
 
+        # Thrust bearing has its own degradation pathway (axial load wear, separate from radial)
+        bearing_thrust_health = health_state.get('bearing_thrust', 1.0)
+        thrust_specific_penalty = (1.0 - bearing_thrust_health) * 30.0
+
         target_de = base_temp + friction_penalty + random.gauss(0, 1)
         target_nde = base_temp + friction_penalty * 0.85 + random.gauss(0, 1)
-        target_thrust = base_temp + friction_penalty * 1.25 + random.gauss(0, 1)
+        target_thrust = base_temp + friction_penalty * 1.25 + thrust_specific_penalty + random.gauss(0, 1)
 
         self.bearing_temp_de = self._approach(self.bearing_temp_de, target_de, 0.1)
         self.bearing_temp_nde = self._approach(self.bearing_temp_nde, target_nde, 0.1)
@@ -971,6 +983,17 @@ class Compressor:
         orbit_amplitude = orbit_metrics['orbit_amplitude']
         sync_amplitude = orbit_metrics['sync_amplitude']
 
+        # Rotor crack: stiffness asymmetry amplifies 1X and generates 2X component
+        rotor_crack_health = health_state.get('rotor_crack', 1.0)
+        rotor_crack_deg = 1.0 - rotor_crack_health
+        sync_amplitude = round(sync_amplitude * (1.0 + 0.5 * rotor_crack_deg), 4)
+        # 2X emerges as crack breathing (stiffness asymmetry) — quadratic onset
+        sync_2x_amplitude = round(0.02 + 0.3 * rotor_crack_deg ** 2, 4)
+
+        # Thrust bearing axial displacement (separate probe axis from radial XY orbit)
+        bearing_thrust_health = health_state.get('bearing_thrust', 1.0)
+        shaft_axial_displacement = round(0.01 + (1.0 - bearing_thrust_health) * 0.25 + random.gauss(0, 0.002), 4)
+
         # Optionally get enhanced velocity metrics for ML features
         vib_rms = None
         vib_peak = None
@@ -1079,8 +1102,10 @@ class Compressor:
             'thrust_bearing_temp': round(self._add_noise(self.thrust_bearing_temp, 0.3), 2),
             'shaft_x_displacement': round(orbit_amplitude / 2, 4),
             'shaft_y_displacement': round(orbit_amplitude / 2 * 0.95, 4),
+            'shaft_axial_displacement': round(shaft_axial_displacement, 4),
             'orbit_amplitude': round(orbit_amplitude, 4),
             'sync_amplitude': round(sync_amplitude, 4),
+            'sync_2x_amplitude': round(sync_2x_amplitude, 4),
             'primary_seal_leakage': round(seal_state['primary_leakage'], 3),
             'secondary_seal_leakage': round(seal_state['secondary_leakage'], 3),
             'efficiency': round(self.efficiency, 4),
@@ -1090,6 +1115,8 @@ class Compressor:
             'health_bearing': round(health_state['bearing'], 4),
             'health_seal_primary': round(seal_state['primary_health'], 4),
             'health_seal_secondary': round(seal_state['secondary_health'], 4),
+            'health_bearing_thrust': round(health_state.get('bearing_thrust', 0.90), 4),
+            'health_rotor_crack': round(health_state.get('rotor_crack', 0.98), 4),
             'surge_active': surge_state['surge_active'],
             'surge_cycle_count': surge_state.get('surge_cycle_count', 0),
         }
@@ -1162,7 +1189,9 @@ def generate_compressor_dataset(
         
         initial_health = {
             'impeller': random.uniform(0.75, 0.98),
-            'bearing': random.uniform(0.70, 0.95)
+            'bearing': random.uniform(0.70, 0.95),
+            'bearing_thrust': random.uniform(0.72, 0.95),
+            'rotor_crack': random.uniform(0.88, 0.99),
         }
         
         compressor = Compressor(
@@ -1218,7 +1247,9 @@ if __name__ == '__main__':
         name="CC-001",
         initial_health={
             'impeller': 0.88,
-            'bearing': 0.82
+            'bearing': 0.82,
+            'bearing_thrust': 0.85,
+            'rotor_crack': 0.96,
         },
         design_flow=1500,
         design_head=8000
