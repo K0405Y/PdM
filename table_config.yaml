@@ -7,7 +7,7 @@ equipment_types:
 
   turbine:
     master:
-      table: master_data.gas_turbines
+      table: master_data.turbines
       id_column: turbine_id
       insert_columns:
         - name
@@ -24,7 +24,7 @@ equipment_types:
       constructor_params: {}
 
     telemetry:
-      table: telemetry.gas_turbine_telemetry
+      table: telemetry.turbine_telemetry
       id_column: telemetry_id
       equipment_id_column: turbine_id
       health_columns:
@@ -74,7 +74,7 @@ equipment_types:
         upset_severity: upset_severity
 
     failures:
-      table: failure_events.gas_turbine_failures
+      table: failure_events.turbine_failures
       equipment_id_column: turbine_id
       insert_columns:
         - failure_time
@@ -90,15 +90,15 @@ equipment_types:
         - { state_key: vibration_rms, db_column: vibration_mm_s_at_failure }
 
     maintenance:
-      table: maintenance_events.gas_turbine_maintenance
+      table: maintenance_events.turbine_maintenance
       equipment_id_column: turbine_id
 
     test_telemetry:
-      table: test_data.gas_turbine_telemetry
+      table: test_data.turbine_telemetry
     test_failure:
-      table: test_data.gas_turbine_failures
+      table: test_data.turbine_failures
     test_maintenance:
-      table: test_data.gas_turbine_maintenance
+      table: test_data.turbine_maintenance
 
   compressor:
     master:
@@ -623,7 +623,7 @@ failure_modes:
         - egt_celsius
       typical_lead_time_hours: "1000-3000"
 
-    - mode_code: F_VIB_TRIP
+    - mode_code: F_HIGH_VIBRATION
       description: "High Vibration Trip - Vibration exceeded trip limit"
       failure_threshold: 0.0
       severity: safety_critical

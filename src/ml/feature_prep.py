@@ -456,9 +456,9 @@ class FeatureEngineer:
             features['vibration_temp_interaction'] = 0.0
 
         if seal_leakage is not None:
-            features['seal_indicator'] = seal_leakage * eff_loss
+            features['primary_seal_indicator'] = seal_leakage * eff_loss
         else:
-            features['seal_indicator'] = 0.0
+            features['primary_seal_indicator'] = 0.0
 
         return features
 
@@ -633,7 +633,13 @@ def compute_regressor_indicators(df: pd.DataFrame, equipment_type: str = "turbin
         df['hgp_thermal_indicator'] = round((egt - comp_discharge_temp) / comp_discharge_temp.clip(lower=1.0), 2)
         # Blade: compressor discharge drops with blade erosion while efficiency also drops
         df['blade_compression_indicator'] = round(comp_discharge_temp / eff.clip(lower=0.01), 2)
-        n_features = 9
+        # Comp fouling: discharge pressure drops without EGT rise — negative pattern needs explicit indicator
+        # High when healthy (high pressure, high efficiency, flat EGT), low when fouled
+        comp_discharge_pressure = df.get('compressor_discharge_pressure_kpa', pd.Series(1.0, index=df.index))
+        df['comp_fouling_indicator'] = round(
+            comp_discharge_pressure / (egt.clip(lower=1.0) * eff.clip(lower=0.01)), 2
+        )
+        n_features = 10
 
     elif equipment_type == 'compressor':
         vib = df['vibration_amplitude_mm']
@@ -653,14 +659,20 @@ def compute_regressor_indicators(df: pd.DataFrame, equipment_type: str = "turbin
         n_features = 8
 
     else:
-        # Pump or other — shared indicators only
+        # Pump — shared indicators + wear ring
         vib_rms = df['vibration_rms_mm_s']
         bearing_temp_de = df['bearing_temp_de_celsius']
 
         df['blade_indicator'] = round(vib_rms / eff.clip(lower=0.01), 2)
         df['bearing_indicator'] = round(vib_rms * bearing_temp_de, 2)
         df['vibration_shape_factor'] = round(vib_rms, 2)
-        n_features = 3
+        # Wear ring: BEP deviation × efficiency loss — no vibration, only hydraulic degradation
+        if 'bep_deviation_percent' in df.columns:
+            bep_dev = df['bep_deviation_percent']
+            df['wear_ring_indicator'] = round(bep_dev * eff_loss, 2)
+        else:
+            df['wear_ring_indicator'] = 0.0
+        n_features = 4
 
     logger.info(f"Computed {n_features} regressor indicator features for {equipment_type}")
     return df

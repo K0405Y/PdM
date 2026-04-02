@@ -760,12 +760,12 @@ class GasTurbine:
             vib_crest = 0
             vib_kurtosis = 0
 
-        # === CHECK ALL FAILURE CONDITIONS ===
+        #CHECK ALL FAILURE CONDITIONS
         # Process-based trips are checked first to give them priority
 
         # Check for vibration trip (process-based)
         if vib_rms > self.LIMITS['vib_trip']:
-            raise Exception("F_VIB_TRIP")
+            raise Exception("F_HIGH_VIBRATION")
 
         # Check component health failures (health-based)
         if health_state.get('failed_mode'):
