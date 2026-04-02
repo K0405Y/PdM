@@ -15,9 +15,11 @@ equipment_types:
         - location
         - installed_date
         - initial_health_hgp
-        - initial_health_blade
+        - initial_health_blade_compressor
+        - initial_health_blade_turbine
         - initial_health_bearing
         - initial_health_fuel
+        - initial_health_compressor_fouling
       # DB column → simulator constructor kwarg (non-health, non-name params)
       constructor_params: {}
 
@@ -27,9 +29,11 @@ equipment_types:
       equipment_id_column: turbine_id
       health_columns:
         - health_hgp
-        - health_blade
+        - health_blade_compressor
+        - health_blade_turbine
         - health_bearing
         - health_fuel
+        - health_compressor_fouling
       key_numeric_columns:
         - speed_rpm
         - egt_celsius
@@ -55,10 +59,14 @@ equipment_types:
         vibration_peak: vibration_peak_mm_s
         vibration_crest_factor: vibration_crest_factor
         vibration_kurtosis: vibration_kurtosis
+        bpfo_order: bpfo_order
+        bpfi_order: bpfi_order
         health_hgp: health_hgp
-        health_blade: health_blade
+        health_blade_compressor: health_blade_compressor
+        health_blade_turbine: health_blade_turbine
         health_bearing: health_bearing
         health_fuel: health_fuel
+        health_compressor_fouling: health_compressor_fouling
         num_active_faults: num_active_faults
         total_faults_initiated: total_faults_initiated
         upset_active: upset_active
@@ -107,6 +115,8 @@ equipment_types:
         - initial_health_bearing
         - initial_health_seal_primary
         - initial_health_seal_secondary
+        - initial_health_bearing_thrust
+        - initial_health_rotor_crack
       constructor_params:
         design_flow_m3h: design_flow
         design_head_kj_kg: design_head
@@ -118,8 +128,10 @@ equipment_types:
       health_columns:
         - health_impeller
         - health_bearing
-        - seal_health_primary
-        - seal_health_secondary
+        - health_seal_primary
+        - health_seal_secondary
+        - health_bearing_thrust
+        - health_rotor_crack
       key_numeric_columns:
         - speed_rpm
         - flow_m3h
@@ -144,17 +156,21 @@ equipment_types:
         surge_alarm: surge_alarm
         orbit_amplitude: vibration_amplitude_mm
         sync_amplitude: sync_amplitude_mm
+        sync_2x_amplitude: sync_2x_amplitude_mm
         shaft_x_displacement: shaft_x_displacement_mm
         shaft_y_displacement: shaft_y_displacement_mm
+        shaft_axial_displacement: shaft_axial_displacement_mm
         bearing_temp_de: bearing_temp_de_celsius
         bearing_temp_nde: bearing_temp_nde_celsius
         thrust_bearing_temp: thrust_bearing_temp_celsius
-        health_seal_primary: seal_health_primary
-        health_seal_secondary: seal_health_secondary
+        health_seal_primary: health_seal_primary
+        health_seal_secondary: health_seal_secondary
         primary_seal_leakage: primary_seal_leakage_kg_s
         secondary_seal_leakage: secondary_seal_leakage_kg_s
         health_impeller: health_impeller
         health_bearing: health_bearing
+        health_bearing_thrust: health_bearing_thrust
+        health_rotor_crack: health_rotor_crack
         num_active_faults: num_active_faults
         total_faults_initiated: total_faults_initiated
         upset_active: upset_active
@@ -206,6 +222,7 @@ equipment_types:
         - initial_health_seal
         - initial_health_bearing_de
         - initial_health_bearing_nde
+        - initial_health_wear_ring
       constructor_params:
         design_flow_m3h: design_flow
         design_head_m: design_head
@@ -218,6 +235,7 @@ equipment_types:
       equipment_id_column: pump_id
       health_columns:
         - health_impeller
+        - health_wear_ring
         - health_seal
         - health_bearing_de
         - health_bearing_nde
@@ -253,9 +271,11 @@ equipment_types:
         seal_leakage: seal_leakage_rate
         bep_deviation: bep_deviation_percent
         health_impeller: health_impeller
+        health_wear_ring: health_wear_ring
         health_seal: health_seal
         health_bearing_de: health_bearing_de
         health_bearing_nde: health_bearing_nde
+        bearing_alarm: bearing_alarm
 
     failures:
       table: failure_events.pump_failures
@@ -428,6 +448,7 @@ regressor_indicator_columns:
     - vibration_egt_interaction
     - hgp_thermal_indicator
     - blade_compression_indicator
+    - comp_fouling_indicator
   compressor:
     - impeller_indicator
     - blade_indicator
@@ -441,6 +462,7 @@ regressor_indicator_columns:
     - blade_indicator
     - bearing_indicator
     - vibration_shape_factor
+    - wear_ring_indicator
 
 
 # Internal simulator state fields
@@ -546,16 +568,27 @@ failure_modes:
         - vibration_rms_mm_s
       typical_lead_time_hours: "2000-6000"
 
-    - mode_code: F_BLADE
-      description: "Blade Erosion - Leading edge degradation"
+    - mode_code: F_BLADE_COMPRESSOR
+      description: "Compressor Blade Fouling/Erosion - Discharge temp loss, aero efficiency drop"
+      failure_threshold: 0.40
+      severity: safety_critical
+      primary_indicators:
+        - compressor_discharge_temp_celsius
+        - efficiency_fraction
+      lagging_indicators:
+        - vibration_rms_mm_s
+      typical_lead_time_hours: "3000-8000"
+
+    - mode_code: F_BLADE_TURBINE
+      description: "Turbine Blade Tip Clearance/Rub - Integer harmonic vibration signature"
       failure_threshold: 0.40
       severity: safety_critical
       primary_indicators:
         - vibration_rms_mm_s
-        - vibration_peak_mm_s
+        - vibration_kurtosis
       lagging_indicators:
-        - efficiency_fraction
-      typical_lead_time_hours: "3000-8000"
+        - egt_celsius
+      typical_lead_time_hours: "2000-6000"
 
     - mode_code: F_BEARING
       description: "Bearing Failure - Lubrication/mechanical degradation"
@@ -570,7 +603,7 @@ failure_modes:
 
     - mode_code: F_FUEL
       description: "Fuel System Fouling - Nozzle blockage"
-      failure_threshold: 0.55
+      failure_threshold: 0.40
       severity: performance
       primary_indicators:
         - fuel_flow_kg_s
@@ -578,6 +611,27 @@ failure_modes:
       lagging_indicators:
         - efficiency_fraction
       typical_lead_time_hours: "2000-5000"
+
+    - mode_code: F_COMPRESSOR_FOULING
+      description: "Compressor Fouling - Airborne deposit buildup on blades/annulus"
+      failure_threshold: 0.60
+      severity: performance
+      primary_indicators:
+        - compressor_discharge_pressure_kpa
+        - efficiency_fraction
+      lagging_indicators:
+        - egt_celsius
+      typical_lead_time_hours: "1000-3000"
+
+    - mode_code: F_VIB_TRIP
+      description: "High Vibration Trip - Vibration exceeded trip limit"
+      failure_threshold: 0.0
+      severity: safety_critical
+      primary_indicators:
+        - vibration_rms_mm_s
+        - vibration_peak_mm_s
+      lagging_indicators: []
+      typical_lead_time_hours: "50-200"
 
   compressor:
     - mode_code: F_IMPELLER
@@ -648,6 +702,28 @@ failure_modes:
         - suction_pressure_kpa
       typical_lead_time_hours: "10-100"
 
+    - mode_code: F_BEARING_THRUST
+      description: "Thrust Bearing Failure - Axial load capacity degradation"
+      failure_threshold: 0.35
+      severity: safety_critical
+      primary_indicators:
+        - thrust_bearing_temp_celsius
+        - shaft_axial_displacement_mm
+      lagging_indicators:
+        - orbit_amplitude_mm
+      typical_lead_time_hours: "1000-4000"
+
+    - mode_code: F_ROTOR_CRACK
+      description: "Rotor Crack - Fatigue crack in shaft, stiffness asymmetry"
+      failure_threshold: 0.30
+      severity: safety_critical
+      primary_indicators:
+        - sync_2x_amplitude_mm
+        - sync_amplitude_mm
+      lagging_indicators:
+        - orbit_amplitude_mm
+      typical_lead_time_hours: "3000-10000"
+
   pump:
     - mode_code: F_IMPELLER
       description: "Impeller Degradation - Erosion, corrosion, or damage"
@@ -662,9 +738,21 @@ failure_modes:
         - power_kw
       typical_lead_time_hours: "1500-5000"
 
+    - mode_code: F_WEAR_RING
+      description: "Wear Ring Degradation - Clearance increase shifts BEP, drops head/efficiency"
+      failure_threshold: 0.35
+      severity: availability
+      primary_indicators:
+        - bep_deviation_percent
+        - efficiency_fraction
+        - head_m
+      lagging_indicators:
+        - power_kw
+      typical_lead_time_hours: "2000-6000"
+
     - mode_code: F_SEAL
       description: "Mechanical Seal Failure - Wear, thermal damage, or contamination"
-      failure_threshold: 0.40
+      failure_threshold: 0.30
       severity: availability
       primary_indicators:
         - seal_leakage_rate
@@ -694,30 +782,8 @@ failure_modes:
       lagging_indicators: []
       typical_lead_time_hours: "1000-4000"
 
-    - mode_code: F_BEARING_OVERTEMP
-      description: "Bearing Overtemperature - Excessive friction or cooling failure"
-      failure_threshold: 0.0
-      severity: safety_critical
-      primary_indicators:
-        - bearing_temp_de_celsius
-        - bearing_temp_nde_celsius
-      lagging_indicators:
-        - vibration_rms_mm_s
-      typical_lead_time_hours: "50-200"
-
-    - mode_code: F_HIGH_VIBRATION
-      description: "High Vibration Trip - Mechanical instability"
-      failure_threshold: 0.0
-      severity: safety_critical
-      primary_indicators:
-        - vibration_rms_mm_s
-        - vibration_peak_mm_s
-      lagging_indicators:
-        - bearing_temp_de_celsius
-      typical_lead_time_hours: "50-300"
-
     - mode_code: F_CAVITATION
-      description: "Severe Cavitation - NPSH margin critical"
+      description: "Severe Cavitation - NPSH margin critical (sustained 30s)"
       failure_threshold: 0.0
       severity: availability
       primary_indicators:
@@ -728,14 +794,3 @@ failure_modes:
         - vibration_rms_mm_s
         - efficiency_fraction
       typical_lead_time_hours: "100-500"
-
-    - mode_code: F_MOTOR_OVERLOAD
-      description: "Motor Overload - Excessive current draw"
-      failure_threshold: 0.0
-      severity: availability
-      primary_indicators:
-        - motor_current_amps
-        - motor_current_ratio
-      lagging_indicators:
-        - power_kw
-      typical_lead_time_hours: "10-100"

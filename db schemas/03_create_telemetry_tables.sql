@@ -1,8 +1,8 @@
 -- Telemetry Schema - Time Series Data
 -- Updated to include ALL simulator output modes (environmental, maintenance, faults, upsets, enhanced vibration)
-CREATE TABLE IF NOT EXISTS telemetry.gas_turbine_telemetry (
+CREATE TABLE IF NOT EXISTS telemetry.turbine_telemetry (
     telemetry_id BIGSERIAL PRIMARY KEY,
-    turbine_id INT NOT NULL REFERENCES master_data.gas_turbines(turbine_id) ON DELETE CASCADE,
+    turbine_id INT NOT NULL REFERENCES master_data.turbines(turbine_id) ON DELETE CASCADE,
     sample_time TIMESTAMP NOT NULL,
     operating_hours FLOAT,
     -- Core measurements
@@ -22,11 +22,16 @@ CREATE TABLE IF NOT EXISTS telemetry.gas_turbine_telemetry (
     vibration_peak_mm_s FLOAT,
     vibration_crest_factor FLOAT,
     vibration_kurtosis FLOAT,
+    -- Bearing defect order ratios (speed-invariant)
+    bpfo_order FLOAT,
+    bpfi_order FLOAT,
     -- Health indicators
     health_hgp FLOAT,
-    health_blade FLOAT,
+    health_blade_compressor FLOAT,
+    health_blade_turbine FLOAT,
     health_bearing FLOAT,
     health_fuel FLOAT,
+    health_compressor_fouling FLOAT,
     -- Fault tracking (enable_faults=True)
     num_active_faults INT,
     total_faults_initiated INT,
@@ -60,20 +65,24 @@ CREATE TABLE IF NOT EXISTS telemetry.compressor_telemetry (
     -- Vibration and shaft dynamics
     vibration_amplitude_mm FLOAT,
     sync_amplitude_mm FLOAT,
+    sync_2x_amplitude_mm FLOAT,
     shaft_x_displacement_mm FLOAT,
     shaft_y_displacement_mm FLOAT,
+    shaft_axial_displacement_mm FLOAT,
     -- Bearing temperatures
     bearing_temp_de_celsius FLOAT,
     bearing_temp_nde_celsius FLOAT,
     thrust_bearing_temp_celsius FLOAT,
     -- Seal condition
-    seal_health_primary FLOAT,
-    seal_health_secondary FLOAT,
     primary_seal_leakage_kg_s FLOAT,
     secondary_seal_leakage_kg_s FLOAT,
     -- Health indicators
     health_impeller FLOAT,
     health_bearing FLOAT,
+    health_seal_primary FLOAT,
+    health_seal_secondary FLOAT,
+    health_bearing_thrust FLOAT,
+    health_rotor_crack FLOAT,
     -- Surge event tracking
     surge_active BOOLEAN,
     surge_cycle_count INT,
@@ -121,8 +130,11 @@ CREATE TABLE IF NOT EXISTS telemetry.pump_telemetry (
     seal_leakage_rate FLOAT,
     -- Performance
     bep_deviation_percent FLOAT,
+    -- Alarm flags
+    bearing_alarm VARCHAR(50),
     -- Health indicators
     health_impeller FLOAT,
+    health_wear_ring FLOAT,
     health_seal FLOAT,
     health_bearing_de FLOAT,
     health_bearing_nde FLOAT,
@@ -130,8 +142,8 @@ CREATE TABLE IF NOT EXISTS telemetry.pump_telemetry (
 );
 
 -- Create indexes for efficient queries
-CREATE INDEX IF NOT EXISTS idx_gt_telemetry_turbine_time ON telemetry.gas_turbine_telemetry(turbine_id, sample_time DESC);
-CREATE INDEX IF NOT EXISTS idx_gt_telemetry_time ON telemetry.gas_turbine_telemetry(sample_time DESC);
+CREATE INDEX IF NOT EXISTS idx_gt_telemetry_turbine_time ON telemetry.turbine_telemetry(turbine_id, sample_time DESC);
+CREATE INDEX IF NOT EXISTS idx_gt_telemetry_time ON telemetry.turbine_telemetry(sample_time DESC);
 CREATE INDEX IF NOT EXISTS idx_cc_telemetry_compressor_time ON telemetry.compressor_telemetry(compressor_id, sample_time DESC);
 CREATE INDEX IF NOT EXISTS idx_cc_telemetry_time ON telemetry.compressor_telemetry(sample_time DESC);
 CREATE INDEX IF NOT EXISTS idx_cp_telemetry_pump_time ON telemetry.pump_telemetry(pump_id, sample_time DESC);
