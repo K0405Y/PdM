@@ -269,9 +269,7 @@ class MasterData:
                     'initial_health_seal': random.uniform(0.70, 0.98),
                     'initial_health_bearing_de': random.uniform(0.70, 0.98),
                     'initial_health_bearing_nde': random.uniform(0.70, 0.98),
-                    'initial_health_wear_ring': _tiered_health(
-                        i, count, fresh_range=(0.90, 0.97), mid_range=(0.68, 0.82), late_range=(0.48, 0.58)
-                    ),
+                    'initial_health_wear_ring': random.uniform(0.70, 0.98),
                 }
                 result = session.execute(text(
                     f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
@@ -291,7 +289,6 @@ class MasterData:
             raise
         finally:
             session.close()
-
         return ids
 
     def get_configs(self, equipment_ids: List[int], equipment_type: str) -> List[Dict]:
