@@ -152,9 +152,11 @@ class DataPipeline:
                 'name': config['name'],
                 'initial_health': {
                     'hgp': config['initial_health_hgp'],
-                    'blade': config['initial_health_blade'],
+                    'blade_compressor': config['initial_health_blade_compressor'],
+                    'blade_turbine': config['initial_health_blade_turbine'],
                     'bearing': config['initial_health_bearing'],
-                    'fuel': config['initial_health_fuel']
+                    'fuel': config['initial_health_fuel'],
+                    'compressor_fouling': config['initial_health_compressor_fouling'],
                 },
                 'ambient_temp': config['ambient_temp_celsius'],
                 'ambient_pressure': config['ambient_pressure_kpa']
