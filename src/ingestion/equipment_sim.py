@@ -15,6 +15,8 @@ from multiprocessing import Pool, cpu_count
 
 logger = logging.getLogger(__name__)
 
+_PROCESS_TRIP_CODES = frozenset({'F_HIGH_VIBRATION', 'F_BEARING_OVERTEMP', 'F_MOTOR_OVERLOAD'})
+
 
 def _get_failed_component(failure_code: str) -> str:
     """
@@ -318,30 +320,15 @@ def simulate_equipment(equipment, equipment_id: int, equipment_type: str,
             if include_equipment_type:
                 telemetry_record['equipment_type'] = equipment_type
 
-            # Check for bearing/motor process alarms (non-fatal flags from pump model)
-            # These fire as state flags, not exceptions, so components keep degrading.
-            # On each new alarm onset (or alarm type change), probabilistically shutdown.
-            # Cooldown after maintenance suppresses alarm shutdowns so components can
-            # degrade to health-based failure thresholds (impeller, bearing, cavitation).
             if alarm_cooldown > 0:
                 alarm_cooldown -= 1
             bearing_alarm = state.get('bearing_alarm') if state else None
             if bearing_alarm:
                 telemetry_record['alarm'] = bearing_alarm
                 if bearing_alarm != current_alarm:
-                    # New alarm or alarm type changed — decide whether to shutdown
                     current_alarm = bearing_alarm
                     if alarm_cooldown == 0 and random.random() < 0.12:
                         yield telemetry_record
-                        yield {
-                            'type': 'failure',
-                            'equipment_id': equipment_id,
-                            'equipment_type': equipment_type,
-                            'failure_time': sample_time,
-                            'operating_hours_at_failure': equipment.operating_hours,
-                            'failure_mode_code': bearing_alarm,
-                            'state': state
-                        }
                         repaired_components = _repair_equipment(
                             equipment, equipment_type, bearing_alarm
                         )
@@ -366,21 +353,18 @@ def simulate_equipment(equipment, equipment_id: int, equipment_type: str,
         except Exception as e:
             failure_code = str(e)
 
-            # Yield failure record
-            yield {
-                'type': 'failure',
-                'equipment_id': equipment_id,
-                'equipment_type': equipment_type,
-                'failure_time': sample_time,
-                'operating_hours_at_failure': equipment.operating_hours,
-                'failure_mode_code': failure_code,
-                'state': state if state else {}
-            }
+            if failure_code not in _PROCESS_TRIP_CODES:
+                yield {
+                    'type': 'failure',
+                    'equipment_id': equipment_id,
+                    'equipment_type': equipment_type,
+                    'failure_time': sample_time,
+                    'operating_hours_at_failure': equipment.operating_hours,
+                    'failure_mode_code': failure_code,
+                    'state': state if state else {}
+                }
 
-            # Repair the failed component and enter maintenance period
             repaired_components = _repair_equipment(equipment, equipment_type, failure_code)
-
-            # Yield maintenance start record
             yield {
                 'type': 'maintenance_start',
                 'equipment_id': equipment_id,
@@ -390,8 +374,6 @@ def simulate_equipment(equipment, equipment_id: int, equipment_type: str,
                 'repaired_components': repaired_components,
                 'downtime_hours': maintenance_downtime_hours
             }
-
-            # Enter maintenance period
             in_maintenance = True
             maintenance_remaining = maintenance_samples
 
