@@ -560,19 +560,33 @@ class FeatureEngineer:
         return values
 
 
-def label_telemetry(telemetry: pd.DataFrame, failures: pd.DataFrame, 
-                        prediction_horizon_hours: float = 168.0) -> pd.DataFrame:
+# Process-driven failures have very short precursor windows — using the default
+# 168h horizon would label hundreds of clean rows as "pre-failure", injecting noise.
+# All other modes degrade over hundreds-to-thousands of hours; 168h is well inside
+# their detectable windows.
+FAILURE_MODE_HORIZONS = {
+    'F_CAVITATION': 24,   # pump: 3 consecutive bad NPSH steps (~15–25 min actual onset)
+    'F_SURGE':      48,   # compressor: process event, but compressor fouling can give ~48h signal
+}
+
+
+def label_telemetry(telemetry: pd.DataFrame, failures: pd.DataFrame,
+                    prediction_horizon_hours: float = 168.0) -> pd.DataFrame:
     """
     Label each telemetry row with the upcoming failure mode or NORMAL.
 
     For each failure event, all telemetry rows for that equipment within
-    `prediction_horizon_hours` before the failure are labeled with the
-    failure_mode_code. Everything else is NORMAL.
+    the horizon before the failure are labeled with the failure_mode_code.
+    Everything else is NORMAL.
+
+    Process-driven failures (F_CAVITATION, F_SURGE) use shorter per-mode horizons
+    defined in FAILURE_MODE_HORIZONS to avoid labeling clean data as pre-failure.
+    All other modes use prediction_horizon_hours.
 
     Args:
         telemetry: Telemetry DataFrame with columns [equipment_id, sample_time, ...]
         failures: Failure DataFrame with columns [equipment_id, failure_time, failure_mode_code]
-        prediction_horizon_hours: Hours before failure to label as pre-failure
+        prediction_horizon_hours: Default hours before failure to label as pre-failure
 
     Returns:
         Telemetry DataFrame with added 'label' column
@@ -584,13 +598,12 @@ def label_telemetry(telemetry: pd.DataFrame, failures: pd.DataFrame,
         logger.warning("No failure events — all rows labeled NORMAL")
         return df
 
-    horizon = pd.Timedelta(hours=prediction_horizon_hours)
-
     for _, failure in failures.iterrows():
         eq_id = failure['equipment_id']
         f_time = pd.Timestamp(failure['failure_time'])
         mode = failure['failure_mode_code']
-        window_start = f_time - horizon
+        hours = FAILURE_MODE_HORIZONS.get(mode, prediction_horizon_hours)
+        window_start = f_time - pd.Timedelta(hours=hours)
 
         mask = (
             (df['equipment_id'] == eq_id) &
