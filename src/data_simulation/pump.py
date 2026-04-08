@@ -504,10 +504,9 @@ class Pump:
         self.impeller_health = (initial_health or {}).get('impeller', 0.94)
         self.impeller_degradation_rate = 0.00001
 
-        # Wear ring health — clearance increase shifts BEP, drops head/efficiency without vibration rise
         self.wear_ring_health = (initial_health or {}).get('wear_ring', 0.95)
-        self.wear_ring_degradation_rate = 0.000008  # base rate; accelerates with high bep_deviation
-        self._cavitation_steps = 0  # hold-time counter for sustained cavitation
+        self.wear_ring_degradation_rate = 6e-6  # per step; at 12 steps/hr → ~7.2e-5/hr; 0.60 drop ≈ 8,300 hrs from new
+        self._cavitation_steps = 0
         
         # Operating state
         self.speed = 0.0
@@ -668,8 +667,8 @@ class Pump:
         """
         if self.speed > 0:
             bep_deviation = self.hydraulic_model.calculate_bep_deviation(self.flow, self.speed)
-            # Positive feedback: high deviation accelerates ring wear
-            bep_severity_factor = 1.0 + max(0.0, (bep_deviation - 20.0) / 40.0)
+            # Positive feedback: high deviation accelerates ring wear — capped at 2× to prevent runaway
+            bep_severity_factor = min(2.0, 1.0 + max(0.0, (bep_deviation - 20.0) / 40.0))
             effective_rate = self.wear_ring_degradation_rate * severity * bep_severity_factor
             self.wear_ring_health = max(0.0, self.wear_ring_health - effective_rate)
 
@@ -734,8 +733,7 @@ class Pump:
         else:
             self.motor_current = 0
 
-        # Add small random variation
-        self.motor_current += random.uniform(-1, 2)
+        self.motor_current += random.gauss(0, 0.8)
         
     def _approach(self, current: float, target: float, rate: float) -> float:
         """Exponential approach to target."""
@@ -881,7 +879,12 @@ class Pump:
         npsh_r = self.cavitation_model.calculate_npsh_required(
             flow_ratio, speed_ratio, impeller_health
         )
-        npsh_margin = self.cavitation_model.calculate_margin(self.npsh_available, npsh_r)
+        # Transient suction-side NPSHa reduction: slugging, inlet throttling, vapour lock.
+        # Rare (0.5% per step) but realistic suction events reduce effective NPSHa by 20–60%.
+        npsh_effective = self.npsh_available
+        if self.speed > 0 and random.random() < 0.005:
+            npsh_effective *= random.uniform(0.4, 0.8)
+        npsh_margin = self.cavitation_model.calculate_margin(npsh_effective, npsh_r)
         cav_severity = self.cavitation_model.get_severity(npsh_margin)
 
         # Calculate bearing temperature
@@ -904,30 +907,21 @@ class Pump:
         if bearing_state.get('failed_bearing'):
             raise Exception(f"F_BEARING_{bearing_state['failed_bearing'].upper()}")
 
-        # Process-based alarms (non-fatal — flagged for simulation layer to handle)
-        # These are precursor warnings; bearings must keep degrading toward health failure
-        bearing_alarm = None
-        overtemp_active = max_bearing_temp > self.LIMITS['bearing_temp_max'] and self.speed > self.design_speed * 0.95
-        vib_alarm_active = vib_rms_bearing > self.LIMITS['vibration_alarm']
-        if overtemp_active and vib_alarm_active:
-            bearing_alarm = random.choice(['F_BEARING_OVERTEMP', 'F_HIGH_VIBRATION'])
-        elif overtemp_active:
-            bearing_alarm = 'F_BEARING_OVERTEMP'
-        elif vib_alarm_active:
-            bearing_alarm = 'F_HIGH_VIBRATION'
 
-        # Motor overload — also non-fatal alarm (caused by bearing friction + impeller loss)
-        motor_overload_active = self.motor_current > self.motor_rated_current * self.LIMITS['motor_current_max']
-        if motor_overload_active:
+        # Alarm flags (precursor level, below trip — telemetry feature for ML)
+        bearing_alarm = None
+        if max_bearing_temp > self.LIMITS['bearing_temp_max'] and self.speed > self.design_speed * 0.95:
+            bearing_alarm = 'F_BEARING_OVERTEMP'
+        elif vib_rms_bearing > self.LIMITS['vibration_alarm']:
+            bearing_alarm = 'F_HIGH_VIBRATION'
+        elif self.motor_current > self.motor_rated_current * self.LIMITS['motor_current_max']:
             bearing_alarm = 'F_MOTOR_OVERLOAD'
 
-        # Cavitation hold-time: only trip after 30 consecutive steps of severe cavitation
-        # Each next_state() call is ~1 second; 30 steps ~ 30 seconds sustained cavitation
         if self.cavitation_model.is_trip_condition(npsh_margin) and self.speed > 0:
             self._cavitation_steps += 1
         else:
             self._cavitation_steps = 0
-        if self._cavitation_steps >= 30:
+        if self._cavitation_steps >= 3:
             raise Exception("F_CAVITATION")
 
         # Update operating hours
@@ -941,6 +935,7 @@ class Pump:
                     operating_hours=self.elapsed_hours if hasattr(self, 'elapsed_hours') else self.operating_hours,
                     component_health={
                         'impeller': impeller_health,
+                        'wear_ring': self.wear_ring_health,
                         'seal': seal_state.get('seal_health', 0.93),
                         'bearing_de': bearing_state['drive_end_health'],
                         'bearing_nde': bearing_state['non_drive_end_health']
@@ -951,6 +946,9 @@ class Pump:
                     for component in maint_state.get('maintained_components', []):
                         if component == 'impeller':
                             self.impeller_health = min(1.0, self.impeller_health + 0.05)
+                        elif component == 'wear_ring':
+                            # Ring replacement restores nearly to new (machined clearance)
+                            self.wear_ring_health = min(1.0, self.wear_ring_health + 0.55)
                         elif component == 'seal' and hasattr(self.seal_model, '_health'):
                             self.seal_model._health = min(1.0, self.seal_model._health + 0.05)
                         elif component.startswith('bearing'):
