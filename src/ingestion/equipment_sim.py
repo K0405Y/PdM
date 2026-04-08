@@ -15,7 +15,7 @@ from multiprocessing import Pool, cpu_count
 
 logger = logging.getLogger(__name__)
 
-_PROCESS_TRIP_CODES = frozenset({'F_HIGH_VIBRATION', 'F_BEARING_OVERTEMP', 'F_MOTOR_OVERLOAD'})
+
 
 
 def _get_failed_component(failure_code: str) -> str:
@@ -98,11 +98,15 @@ def _repair_equipment(equipment, equipment_type: str, failure_code: str):
         if hasattr(equipment.health_model, '_init_generators'):
             equipment.health_model._init_generators()
 
-    # Repair standalone impeller_health (pump pattern - not inside health_model)
     if hasattr(equipment, 'impeller_health') and failed_component == 'impeller':
         new_health = random.uniform(*repair_health_range)
         equipment.impeller_health = new_health
         repaired['impeller'] = new_health
+
+    if hasattr(equipment, 'wear_ring_health') and failed_component == 'wear_ring':
+        new_health = random.uniform(*repair_health_range)
+        equipment.wear_ring_health = new_health
+        repaired['wear_ring'] = new_health
 
     # Repair seal model if seal failed
     if 'seal' in failed_component:
@@ -212,11 +216,8 @@ def simulate_equipment(equipment, equipment_id: int, equipment_type: str,
     # Duty cycle: 90% running, 10% idle
     duty_cycle = [random.random() < 0.9 for _ in range(num_samples)]
 
-    # Track maintenance periods and alarm state
     in_maintenance = False
     maintenance_remaining = 0
-    alarm_cooldown = 0  # Suppress alarm-triggered shutdowns after maintenance
-    current_alarm = None  # Tracks which alarm is active (None = no alarm)
     state = {}
 
     for i in range(num_samples):
@@ -227,7 +228,6 @@ def simulate_equipment(equipment, equipment_id: int, equipment_type: str,
             maintenance_remaining -= 1
             if maintenance_remaining <= 0:
                 in_maintenance = False
-                alarm_cooldown = maintenance_samples * 8
                 # Yield maintenance complete record
                 yield {
                     'type': 'maintenance_complete',
@@ -320,49 +320,24 @@ def simulate_equipment(equipment, equipment_id: int, equipment_type: str,
             if include_equipment_type:
                 telemetry_record['equipment_type'] = equipment_type
 
-            if alarm_cooldown > 0:
-                alarm_cooldown -= 1
             bearing_alarm = state.get('bearing_alarm') if state else None
             if bearing_alarm:
                 telemetry_record['alarm'] = bearing_alarm
-                if bearing_alarm != current_alarm:
-                    current_alarm = bearing_alarm
-                    if alarm_cooldown == 0 and random.random() < 0.12:
-                        yield telemetry_record
-                        repaired_components = _repair_equipment(
-                            equipment, equipment_type, bearing_alarm
-                        )
-                        yield {
-                            'type': 'maintenance_start',
-                            'equipment_id': equipment_id,
-                            'equipment_type': equipment_type,
-                            'start_time': sample_time,
-                            'failure_code': bearing_alarm,
-                            'repaired_components': repaired_components,
-                            'downtime_hours': maintenance_downtime_hours
-                        }
-                        in_maintenance = True
-                        current_alarm = None
-                        maintenance_remaining = maintenance_samples
-                        continue
-            else:
-                current_alarm = None
 
             yield telemetry_record
 
         except Exception as e:
             failure_code = str(e)
 
-            if failure_code not in _PROCESS_TRIP_CODES:
-                yield {
-                    'type': 'failure',
-                    'equipment_id': equipment_id,
-                    'equipment_type': equipment_type,
-                    'failure_time': sample_time,
-                    'operating_hours_at_failure': equipment.operating_hours,
-                    'failure_mode_code': failure_code,
-                    'state': state if state else {}
-                }
+            yield {
+                'type': 'failure',
+                'equipment_id': equipment_id,
+                'equipment_type': equipment_type,
+                'failure_time': sample_time,
+                'operating_hours_at_failure': equipment.operating_hours,
+                'failure_mode_code': failure_code,
+                'state': state if state else {}
+            }
 
             repaired_components = _repair_equipment(equipment, equipment_type, failure_code)
             yield {
