@@ -269,7 +269,7 @@ class MasterData:
                     'initial_health_seal': random.uniform(0.70, 0.98),
                     'initial_health_bearing_de': random.uniform(0.70, 0.98),
                     'initial_health_bearing_nde': random.uniform(0.70, 0.98),
-                    'initial_health_wear_ring': random.uniform(0.70, 0.98),
+                    'initial_health_wear_ring': random.uniform(0.55, 0.95),
                 }
                 result = session.execute(text(
                     f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
