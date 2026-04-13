@@ -46,6 +46,28 @@ VALID_MODEL_TYPES = ('xgboost', 'random_forest')
 # Health columns where monotonic constraints hurt (entangled physics)
 _UNCONSTRAINED_COLUMNS = {'health_hgp', 'health_blade_compressor', 'health_blade_turbine', 'health_bearing', 'seal_health_primary', 'seal_health_secondary'}
 
+# Maps each health column to the failure label whose rows should be upweighted
+_HEALTH_TO_FAILURE_LABEL = {
+    'health_hgp':               'F_HGP',
+    'health_blade_compressor':  'F_BLADE_COMPRESSOR',
+    'health_blade_turbine':     'F_BLADE_TURBINE',
+    'health_bearing':           'F_BEARING',
+    'health_fuel':              'F_FUEL',
+    'health_compressor_fouling':'F_COMPRESSOR_FOULING',
+}
+
+
+def _compute_failure_weights(labels: np.ndarray, failure_label: str, max_weight: float = 20.0) -> np.ndarray:
+    """Upweight failure-mode rows to counter majority-NORMAL bias, capped at max_weight."""
+    fail_mask = labels == failure_label
+    n_fail = fail_mask.sum()
+    if n_fail == 0:
+        return np.ones(len(labels))
+    weight = min(len(labels) / (2 * n_fail), max_weight)  # balanced, capped
+    weights = np.ones(len(labels))
+    weights[fail_mask] = weight
+    return weights
+
 
 def _build_monotone_constraints(feature_names: List[str], health_col: str = '') -> Tuple[int, ...]:
     """Build monotone_constraints tuple from feature names.
@@ -108,16 +130,17 @@ def _build_model_config(model_type: str, feature_names: List[str], cfg: Dict, he
         raise ValueError(f"Unknown model_type '{model_type}'. Must be one of {VALID_MODEL_TYPES}")
 
 
-def _fit_model(model, X_train, y_train, X_val, y_val, model_type: str):
+def _fit_model(model, X_train, y_train, X_val, y_val, model_type: str, sample_weight=None):
     """Fit a model with appropriate arguments for each model type."""
     if model_type == 'xgboost':
         model.fit(
             X_train, y_train,
             eval_set=[(X_val, y_val)],
             verbose=False,
+            sample_weight=sample_weight,
         )
     else:  # random_forest
-        model.fit(X_train, y_train)
+        model.fit(X_train, y_train, sample_weight=sample_weight)
 
 
 def _get_val_score(model, X_val, y_val, model_type: str) -> float:
@@ -135,6 +158,7 @@ def train_health_estimators(X_train: pd.DataFrame, health_train: pd.DataFrame, X
                             use_target_transform: bool = True,
                             best_params_override: Optional[Dict[str, Dict]] = None,
                             groups: Optional[np.ndarray] = None,
+                            train_labels: Optional[np.ndarray] = None,
                             ) -> Tuple[Dict[str, Any], Optional[str], Dict, Dict]:
     """
     Train one regressor per health indicator column.
@@ -202,6 +226,16 @@ def train_health_estimators(X_train: pd.DataFrame, health_train: pd.DataFrame, X
         X_val_col = X_val
         groups_col = groups
 
+        # Per-column failure weights — upweight the relevant failure mode
+        failure_label = _HEALTH_TO_FAILURE_LABEL.get(col)
+        if train_labels is not None and failure_label is not None:
+            col_weights = _compute_failure_weights(train_labels, failure_label)
+            n_fail = (train_labels == failure_label).sum()
+            eff_weight = col_weights[train_labels == failure_label][0] if n_fail > 0 else 1.0
+            logger.info(f"  {col}: upweighting {n_fail} '{failure_label}' rows by {eff_weight:.1f}x")
+        else:
+            col_weights = None
+
         # Target transformation to spread clustered-near-1.0 distribution
         if use_target_transform:
             qt = QuantileTransformer(output_distribution='normal', n_quantiles=min(1000, len(y_train_raw)))
@@ -235,9 +269,10 @@ def train_health_estimators(X_train: pd.DataFrame, health_train: pd.DataFrame, X
                     y_fold_train = y_train_col[train_idx]
                     X_fold_val = X_train_col.iloc[val_idx]
                     y_fold_val = y_train_col[val_idx]
+                    fold_weights = col_weights[train_idx] if col_weights is not None else None
 
                     model = model_class(**col_params, **trial_params)
-                    _fit_model(model, X_fold_train, y_fold_train, X_fold_val, y_fold_val, model_type)
+                    _fit_model(model, X_fold_train, y_fold_train, X_fold_val, y_fold_val, model_type, sample_weight=fold_weights)
                     fold_scores.append(_get_val_score(model, X_fold_val, y_fold_val, model_type))
 
                 mean_score = np.mean(fold_scores)
@@ -268,7 +303,7 @@ def train_health_estimators(X_train: pd.DataFrame, health_train: pd.DataFrame, X
 
         # Train final model
         final_model = model_class(**col_params, **best_params)
-        _fit_model(final_model, X_train_col, y_train_col, X_val_col, y_val_col, model_type)
+        _fit_model(final_model, X_train_col, y_train_col, X_val_col, y_val_col, model_type, sample_weight=col_weights)
 
         val_mae = _get_val_score(final_model, X_val_col, y_val_col, model_type)
         print(f"  {col} final val mae: {val_mae:.4f}")
