@@ -573,10 +573,12 @@ class GasTurbine:
         hgp_health = health_state.get('hgp', 1.0)
         blade_turbine_health = health_state.get('blade_turbine', 1.0)
         compressor_fouling_health = health_state.get('compressor_fouling', 1.0)
+        fuel_health = health_state.get('fuel', 1.0)
         thermal_loss = (1.0 - hgp_health) * 0.10
         aero_loss = (1.0 - blade_turbine_health) * 0.05
         fouling_loss = (1.0 - compressor_fouling_health) * 0.08
-        self.efficiency = max(0.85, 1.0 - thermal_loss - aero_loss - fouling_loss)
+        fuel_loss = (1.0 - fuel_health) * 0.06   # nozzle fouling reduces combustion efficiency
+        self.efficiency = max(0.85, 1.0 - thermal_loss - aero_loss - fouling_loss - fuel_loss)
 
         # EGT increases with load and degradation
         load_fraction = self.speed / self.LIMITS['speed_rated']
@@ -586,7 +588,8 @@ class GasTurbine:
 
         # HGP is dominant EGT driver; turbine blade has minor effect
         # Fouling does NOT raise EGT — key discriminator (deposits are upstream of combustor)
-        egt_penalty = (1.0 - hgp_health) * 50 + (1.0 - blade_turbine_health) * 10
+        # Fuel nozzle fouling → uneven combustion → hot spots → elevated EGT
+        egt_penalty = (1.0 - hgp_health) * 50 + (1.0 - blade_turbine_health) * 10 + (1.0 - fuel_health) * 20
         target_egt = base_egt + egt_penalty
 
         self.egt = self._approach(self.egt, target_egt, 0.1)
@@ -596,7 +599,6 @@ class GasTurbine:
             self.LIMITS['fuel_flow_max'] - self.LIMITS['fuel_flow_min']
         ) * load_fraction
 
-        fuel_health = health_state.get('fuel', 1.0)
         self.fuel_flow = base_fuel / (self.efficiency * fuel_health)
 
         # Oil temperature correlates with load and bearing health
