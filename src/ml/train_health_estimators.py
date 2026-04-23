@@ -3,7 +3,7 @@ Health Indicator Estimation via Multiple Regressor Types
 
 Trains per-component regressors to estimate health indicators (health_hgp,
 health_blade, health_bearing, health_fuel) from sensor features + physics-based
-indicators. Supports XGBoost, CatBoost, and RandomForest.
+indicators.
 """
 
 import logging
