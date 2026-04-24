@@ -60,9 +60,10 @@ def evaluate_classifier_model(model: xgb.XGBClassifier, X_test: pd.DataFrame, y_
 
     try:
         roc_auc_macro = roc_auc_score(y_test, y_proba, multi_class='ovr', average='macro')
-    except ValueError:
-        roc_auc_macro = None
-
+    except ValueError as e:
+        logger.warning(f"ROC AUC could not be computed for {dataset_name}: {e}")
+        roc_auc_macro = 0.0
+             
     all_labels = list(range(len(class_names)))
     report = classification_report(
         y_test, y_pred,
