@@ -47,7 +47,6 @@ class GasTurbineHealthModel:
         'F_BEARING': 'Bearing Failure - Lubrication/mechanical degradation',
         'F_FUEL': 'Fuel System Fouling - Nozzle blockage',
         'F_COMPRESSOR_FOULING': 'Compressor Fouling - Airborne deposit buildup',
-        'F_VIB_TRIP': 'High Vibration Trip - Vibration exceeded trip limit',
     }
 
     def __init__(self,
@@ -277,7 +276,6 @@ class VibrationSignalGenerator:
             signal += amp * np.sin(2 * np.pi * harm * f0 * t + self._phase)
             
         # Add fault signatures based on degraded health
-        # Non-linear amplitude growth enables F_VIB_TRIP before health failures
 
         # Bearing health affects bearing defect signatures
         bearing_health = health_state.get('bearing', 1.0)
@@ -351,7 +349,6 @@ class GasTurbine:
         'egt_max': 620,          # °C (alarm threshold)
         'egt_nominal': 520,      # °C (normal full load)
         'vib_alarm': 2.2,        # mm/s (API 670)
-        'vib_trip': 3.0,         # mm/s
         'oil_temp_min': 70,      # °C
         'oil_temp_max': 130,     # °C (alarm)
         'oil_temp_nominal': 95,  # °C
@@ -766,10 +763,6 @@ class GasTurbine:
         if health_state.get('failed_mode'):
             raise Exception(f"F_{health_state['failed_mode'].upper()}")
 
-        # Vibration trip (process-based, secondary — caught by equipment_sim as non-recordable)
-        if vib_rms > self.LIMITS['vib_trip']:
-            raise Exception("F_HIGH_VIBRATION")
-        
         # 11. Check maintenance required if enabled
         if self.use_maintenance:
             if self._maintenance_until_hours > 0 and self.operating_hours < self._maintenance_until_hours:
