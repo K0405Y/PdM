@@ -66,7 +66,6 @@ INSERT INTO failure_events.failure_modes (equipment_type, mode_code, description
     ('turbine', 'F_BEARING', 'Bearing Failure - Lubrication/mechanical degradation'),
     ('turbine', 'F_FUEL', 'Fuel System Fouling - Nozzle blockage'),
     ('turbine', 'F_COMPRESSOR_FOULING', 'Compressor Fouling - Airborne deposit buildup'),
-    ('turbine', 'F_HIGH_VIBRATION', 'High Vibration Trip - Vibration exceeded trip limit'),
     ('compressor', 'F_IMPELLER', 'Impeller Degradation - Erosion or fouling'),
     ('compressor', 'F_BEARING', 'Bearing Failure - Journal bearing damage'),
     ('compressor', 'F_SEAL_PRIMARY', 'Primary Dry Gas Seal Failure'),
