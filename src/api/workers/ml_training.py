@@ -10,7 +10,6 @@ checkpoints (between phases) and aborts if it's been flipped to 'cancelled'.
 """
 
 from __future__ import annotations
-
 import logging
 import os
 import sys
@@ -20,11 +19,13 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from uuid import UUID
 from sqlalchemy import text
+from mlflow import MlflowClient
+import ml.train as train  
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
-
+    
 from api.dependencies import get_db  
 
 logger = logging.getLogger("api.workers.ml_training")
@@ -107,7 +108,6 @@ def _stamp_mlflow_tags(run_id: Optional[str], tags: Dict[str, str]) -> None:
     if not run_id:
         return
     try:
-        from mlflow import MlflowClient
         client = MlflowClient()
         for k, v in tags.items():
             if v is not None:
@@ -142,8 +142,6 @@ def run_training_job(job_id: UUID, equipment_type: str, task: str, request: Dict
     row was inserted by the router before this was scheduled, so we only
     transition state and stamp MLflow tags from here.
     """
-    import train  # top-level train.py — imported lazily so import failures are reported as job errors
-
     cfg = train.PipelineConfig(
         equipment_type=equipment_type,
         **request["config"],
@@ -236,7 +234,6 @@ def run_training_job(job_id: UUID, equipment_type: str, task: str, request: Dict
 def _latest_mlflow_run_for(experiment_name: str):
     """Return (run_id, experiment_id) of the most recent run in the experiment, if any."""
     try:
-        from mlflow import MlflowClient
         client = MlflowClient()
         exp = client.get_experiment_by_name(experiment_name)
         if exp is None:
