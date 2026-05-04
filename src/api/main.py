@@ -8,17 +8,37 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from api.config import get_settings, load_table_config
-from api.dependencies import init_database, shutdown_database, get_db
-from api.routers import master_data, weather, telemetry, ml, simulation
+from api.dependencies import (
+    get_db,
+    init_database,
+    init_explainers,
+    init_feature_engineers,
+    init_triton,
+    shutdown_database,
+    shutdown_triton,
+)
+from api.routers import (
+    explainability,
+    inference,
+    master_data,
+    ml_pipeline,
+    simulation,
+    telemetry,
+    weather,
+)
 from api.utils import TABLE_CONFIG
 from api.ngrok import start_tunnel, stop_tunnel
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_database()
+    init_triton()
+    init_feature_engineers()
+    init_explainers()
     start_tunnel()
     yield
     stop_tunnel()
+    shutdown_triton()
     shutdown_database()
 
 
@@ -44,8 +64,10 @@ app.add_middleware(
 app.include_router(master_data.router, prefix="/api/v1/master-data", tags=["Master Data"])
 app.include_router(weather.router, prefix="/api/v1/weather", tags=["Weather & Locations"])
 app.include_router(telemetry.router, prefix="/api/v1/telemetry", tags=["Telemetry"])
-app.include_router(ml.router, prefix="/api/v1/ml", tags=["ML Pipelines"])
+app.include_router(ml_pipeline.router, prefix="/api/v1/ml", tags=["ML Pipelines"])
 app.include_router(simulation.router, prefix="/api/v1/simulation", tags=["Simulation"])
+app.include_router(inference.router, prefix="/api/v1/inference", tags=["Inference"])
+app.include_router(explainability.router, prefix="/api/v1/explain", tags=["Explainability"])
 
 
 @app.get("/health", tags=["System"])
