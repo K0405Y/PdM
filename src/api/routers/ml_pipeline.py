@@ -12,7 +12,6 @@ import time
 from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import UUID, uuid4
-
 from fastapi import (
     APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query,
     Request, Response, status,
@@ -22,7 +21,6 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 import pandas as pd
 import io
-
 from api.dependencies import get_db_session
 from api.utils import TABLE_CONFIG, classify_operating_state, validate_equipment_exists
 from api.schemas.telemetry import EquipmentTypeEnum, OperatingState
@@ -167,8 +165,6 @@ def export_training_data(
         "count": len(items),
     }
 
-
-
 # 1b. Bulk Export as Parquet
 @router.get("/{equipment_type}/bulk-export")
 def bulk_export_training_data(
@@ -244,8 +240,6 @@ def bulk_export_training_data(
 
 
 # 2. Feature Window Queries
-
-
 @router.get("/{equipment_type}/{equipment_id}/windows", response_model=FeatureWindowsResponse)
 def get_feature_windows(
     equipment_type: EquipmentTypeEnum,
@@ -391,7 +385,6 @@ def get_feature_windows(
     )
 
 
-
 # 3. Label Vector
 @router.get("/{equipment_type}/{equipment_id}/labels", response_model=LabelVectorResponse)
 def get_label_vector(
@@ -499,10 +492,7 @@ def get_label_vector(
     )
 
 
-
 # 4. Dataset Statistics
-
-
 @router.get("/{equipment_type}/dataset-stats", response_model=DatasetStatsResponse)
 def get_dataset_stats(
     equipment_type: EquipmentTypeEnum,
