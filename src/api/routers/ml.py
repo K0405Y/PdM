@@ -1,16 +1,28 @@
 """
-ML Pipelines Router — Training export, feature windows, label vectors, dataset stats.
+ML Pipelines Router — Training export, feature windows, label vectors, dataset stats,
+and training job submission/management.
 
 Purpose-built for ML training workflows. These endpoints enforce consistent
 feature engineering, labeling, and data access patterns across all model experiments.
 """
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+import hashlib
+import json as _json
+import os
+import time
+from datetime import datetime, timezone
+from typing import List, Optional
+from uuid import UUID, uuid4
+
+from fastapi import (
+    APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query,
+    Request, Response, status,
+)
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 import pandas as pd
 import io
+
 from api.dependencies import get_db_session
 from api.utils import TABLE_CONFIG, classify_operating_state, validate_equipment_exists
 from api.schemas.telemetry import EquipmentTypeEnum, OperatingState
@@ -20,7 +32,10 @@ from api.schemas.ml import (
     LabelEntry, LabelVectorResponse,
     FeatureStat, HealthDistribution, ClassBalance, TimeCoverage,
     DatasetStatsResponse,
+    TrainingTask, JobStatus,
+    TrainingJobRequest, TrainingJobResponse, TrainingJobListResponse, MlflowLink,
 )
+from api.workers.ml_training import run_training_job
 from ml.feature_prep import FeatureEngineer
 
 router = APIRouter()
@@ -627,3 +642,504 @@ def get_dataset_stats(
         feature_stats=feature_stats,
         health_distribution=health_dist,
     )
+
+
+# 5. Training Jobs
+#
+# POST /{equipment_type}/train     — submit a job (async by default; Prefer: wait=N for sync)
+# GET  /jobs                       — list with filters + cursor
+# GET  /jobs/{job_id}              — single-job state (Prefer: wait=N to block until terminal)
+# GET  /jobs/{job_id}/mlflow       — proxy MLflow run details on demand
+# POST /jobs/{job_id}/cancel       — cooperative cancel
+# POST /jobs/{job_id}/archive      — soft-hide (rows are never deleted)
+
+
+_MIN_WAIT_S = 1
+_MAX_WAIT_S = 300
+_TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
+
+
+def _parse_prefer_header(prefer: Optional[str]) -> dict:
+    """Parse RFC 7240 Prefer header — only respond-async / wait=N concern us."""
+    out = {"respond_async": False, "wait": None}
+    if not prefer:
+        return out
+    for token in (t.strip() for t in prefer.split(",")):
+        if token.lower() == "respond-async":
+            out["respond_async"] = True
+        elif token.lower().startswith("wait="):
+            try:
+                w = int(token.split("=", 1)[1])
+                out["wait"] = max(_MIN_WAIT_S, min(_MAX_WAIT_S, w))
+            except ValueError:
+                pass
+    return out
+
+
+def _resolve_request_id(x_request_id: Optional[str]) -> UUID:
+    if not x_request_id:
+        return uuid4()
+    try:
+        return UUID(x_request_id)
+    except ValueError:
+        return uuid4()
+
+
+def _hash_request_body(body: dict) -> str:
+    """Stable hash of the canonical request body for idempotency comparison."""
+    return hashlib.sha256(_json.dumps(body, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def _client_ip(request: Request) -> Optional[str]:
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else None
+
+
+def _row_to_response(row: dict) -> TrainingJobResponse:
+    mlflow = MlflowLink(
+        run_id=row.get("mlflow_run_id"),
+        experiment_id=row.get("mlflow_experiment_id"),
+        ui_url=_mlflow_ui_url(row.get("mlflow_experiment_id"), row.get("mlflow_run_id")),
+    )
+    return TrainingJobResponse(
+        job_id=row["job_id"],
+        task=row["task"],
+        equipment_type=row["equipment_type"],
+        status=row["status"],
+        progress_message=row.get("progress_message"),
+        error=row.get("error"),
+        submitted_at=row["submitted_at"],
+        started_at=row.get("started_at"),
+        finished_at=row.get("finished_at"),
+        submitted_by=row.get("submitted_by"),
+        request_id=row.get("request_id"),
+        idempotency_key=row.get("idempotency_key"),
+        cache_key=row.get("cache_key"),
+        config=row["config"],
+        mlflow=mlflow,
+        metrics=row.get("metrics"),
+        archived=row.get("archived", False),
+    )
+
+
+def _mlflow_ui_url(experiment_id: Optional[str], run_id: Optional[str]) -> Optional[str]:
+    base = os.environ.get("MLFLOW_UI_URL", "").rstrip("/")
+    if not base or not run_id or not experiment_id:
+        return None
+    return f"{base}/#/experiments/{experiment_id}/runs/{run_id}"
+
+
+def _set_common_headers(
+    response: Response,
+    *,
+    request_id: UUID,
+    job_id: Optional[UUID] = None,
+    mlflow_run_id: Optional[str] = None,
+    preference_applied: Optional[str] = None,
+    suggest_retry: bool = False,
+) -> None:
+    response.headers["X-Request-Id"] = str(request_id)
+    response.headers["Cache-Control"] = "no-store"
+    if job_id is not None:
+        response.headers["X-Job-Id"] = str(job_id)
+    if mlflow_run_id:
+        response.headers["X-MLflow-Run-Id"] = mlflow_run_id
+    if preference_applied:
+        response.headers["Preference-Applied"] = preference_applied
+    if suggest_retry:
+        response.headers["Retry-After"] = "5"
+
+
+def _fetch_job(session: Session, job_id: UUID) -> Optional[dict]:
+    row = session.execute(
+        text("""
+            SELECT job_id, task, equipment_type, config, status, progress_message,
+                   error, submitted_at, started_at, finished_at,
+                   submitted_by, request_id, idempotency_key,
+                   cache_key, mlflow_run_id, mlflow_experiment_id,
+                   metrics, archived
+            FROM ml_jobs.training_jobs
+            WHERE job_id = :id
+        """),
+        {"id": str(job_id)},
+    ).mappings().fetchone()
+    return dict(row) if row else None
+
+
+def _wait_for_terminal(session: Session, job_id: UUID, max_wait: int) -> dict:
+    """Poll the row until terminal or until max_wait seconds elapse."""
+    deadline = time.monotonic() + max_wait
+    poll_s = 0.5
+    while True:
+        row = _fetch_job(session, job_id)
+        if not row:
+            raise HTTPException(404, f"Job {job_id} not found")
+        if row["status"] in _TERMINAL_STATUSES:
+            return row
+        if time.monotonic() >= deadline:
+            return row
+        session.commit()  # release any held snapshot before sleeping
+        time.sleep(min(poll_s, deadline - time.monotonic()))
+        poll_s = min(poll_s * 1.5, 5.0)
+
+
+@router.post(
+    "/{equipment_type}/train",
+    response_model=TrainingJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Submit a training job",
+    description=(
+        "Queue a training job. Async by default (202 Accepted). "
+        "Send `Prefer: wait=<seconds>` (1–300) to block until terminal state, or "
+        "`Prefer: respond-async` to force async even with a wait header."
+    ),
+)
+def submit_training_job(
+    equipment_type: EquipmentTypeEnum,
+    body: TrainingJobRequest,
+    request: Request,
+    response: Response,
+    background: BackgroundTasks,
+    session: Session = Depends(get_db_session),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", max_length=128),
+    x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id", max_length=128),
+    prefer: Optional[str] = Header(None, alias="Prefer"),
+):
+    """Submit one training job. See module docstring for header semantics."""
+    request_id = _resolve_request_id(x_request_id)
+    prefer_opts = _parse_prefer_header(prefer)
+    body_dict = body.model_dump(mode="json")
+
+    # Idempotency: short-circuit if (key, submitted_by) already exists.
+    if idempotency_key:
+        existing = session.execute(
+            text("""
+                SELECT * FROM ml_jobs.training_jobs
+                WHERE idempotency_key = :k
+                  AND COALESCE(submitted_by, '') = COALESCE(:u, '')
+            """),
+            {"k": idempotency_key, "u": x_user_id or ""},
+        ).mappings().fetchone()
+        if existing:
+            existing = dict(existing)
+            stored = {
+                "task": existing["task"],
+                "equipment_type": existing["equipment_type"],
+                "config": existing["config"],
+                "use_cache": existing["config"].get("_use_cache", True),
+                "force_recompute": existing["config"].get("_force_recompute", False),
+            }
+            incoming = {
+                "task": body.task.value,
+                "equipment_type": equipment_type.value,
+                "config": body_dict["config"],
+                "use_cache": body.use_cache,
+                "force_recompute": body.force_recompute,
+            }
+            if _hash_request_body(stored) != _hash_request_body(incoming):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Idempotency-Key '{idempotency_key}' already used with a different "
+                        f"request body. Existing job: {existing['job_id']}"
+                    ),
+                )
+            response.status_code = status.HTTP_303_SEE_OTHER
+            response.headers["Location"] = f"/api/v1/ml/jobs/{existing['job_id']}"
+            _set_common_headers(
+                response,
+                request_id=request_id,
+                job_id=existing["job_id"],
+                mlflow_run_id=existing.get("mlflow_run_id"),
+            )
+            return _row_to_response(existing)
+
+    # Insert the new job. Stash use_cache/force_recompute inside config so the
+    # worker can read them without an extra column.
+    persisted_config = dict(body_dict["config"])
+    persisted_config["_use_cache"] = body.use_cache
+    persisted_config["_force_recompute"] = body.force_recompute
+
+    job_id = uuid4()
+    session.execute(
+        text("""
+            INSERT INTO ml_jobs.training_jobs
+                (job_id, task, equipment_type, config, status,
+                 submitted_by, request_id, idempotency_key,
+                 client_ip, user_agent)
+            VALUES
+                (:job_id, :task, :equipment_type, CAST(:config AS JSONB), 'queued',
+                 :submitted_by, :request_id, :idem,
+                 CAST(NULLIF(:client_ip, '') AS INET), :ua)
+        """),
+        {
+            "job_id": str(job_id),
+            "task": body.task.value,
+            "equipment_type": equipment_type.value,
+            "config": _json.dumps(persisted_config),
+            "submitted_by": x_user_id,
+            "request_id": str(request_id),
+            "idem": idempotency_key,
+            "client_ip": _client_ip(request) or "",
+            "ua": request.headers.get("user-agent"),
+        },
+    )
+    session.commit()
+
+    # Schedule the worker. Pass the validated body + tracing fields so the
+    # worker can stamp MLflow tags without re-reading the row.
+    worker_payload = {
+        "config": body_dict["config"],
+        "use_cache": body.use_cache,
+        "force_recompute": body.force_recompute,
+        "_submitted_by": x_user_id,
+        "_request_id": str(request_id),
+    }
+    background.add_task(
+        run_training_job, job_id, equipment_type.value, body.task.value, worker_payload,
+    )
+
+    # Sync mode? Block until terminal (or budget exhausted).
+    pref_applied = None
+    if not prefer_opts["respond_async"] and prefer_opts["wait"]:
+        row = _wait_for_terminal(session, job_id, prefer_opts["wait"])
+        pref_applied = f"wait={prefer_opts['wait']}"
+        if row["status"] in _TERMINAL_STATUSES:
+            response.status_code = status.HTTP_200_OK
+        # else: still running — fall through with 200 + Retry-After
+        response.headers["Location"] = f"/api/v1/ml/jobs/{job_id}"
+        _set_common_headers(
+            response,
+            request_id=request_id,
+            job_id=job_id,
+            mlflow_run_id=row.get("mlflow_run_id"),
+            preference_applied=pref_applied,
+            suggest_retry=row["status"] not in _TERMINAL_STATUSES,
+        )
+        return _row_to_response(row)
+
+    # Async path — return 202 with Location.
+    row = _fetch_job(session, job_id)
+    response.headers["Location"] = f"/api/v1/ml/jobs/{job_id}"
+    _set_common_headers(
+        response,
+        request_id=request_id,
+        job_id=job_id,
+        suggest_retry=True,
+    )
+    return _row_to_response(row)
+
+
+@router.get(
+    "/jobs",
+    response_model=TrainingJobListResponse,
+    summary="List training jobs",
+)
+def list_training_jobs(
+    response: Response,
+    statuses: Optional[str] = Query(None, alias="status", description="CSV of statuses to include"),
+    task: Optional[TrainingTask] = Query(None),
+    equipment_type: Optional[EquipmentTypeEnum] = Query(None),
+    submitted_by: Optional[str] = Query(None),
+    include_archived: bool = Query(False),
+    limit: int = Query(50, ge=1, le=200),
+    after: Optional[UUID] = Query(None, description="Cursor (job_id from previous page)"),
+    session: Session = Depends(get_db_session),
+    x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
+):
+    request_id = _resolve_request_id(x_request_id)
+
+    where, params = ["1=1"], {}
+    if not include_archived:
+        where.append("archived = FALSE")
+    if statuses:
+        params["statuses"] = [s.strip() for s in statuses.split(",")]
+        where.append("status = ANY(CAST(:statuses AS ml_jobs.job_status[]))")
+    if task:
+        where.append("task = CAST(:task AS ml_jobs.job_task)")
+        params["task"] = task.value
+    if equipment_type:
+        where.append("equipment_type = :equipment_type")
+        params["equipment_type"] = equipment_type.value
+    if submitted_by:
+        where.append("submitted_by = :submitted_by")
+        params["submitted_by"] = submitted_by
+    if after is not None:
+        where.append("submitted_at < (SELECT submitted_at FROM ml_jobs.training_jobs WHERE job_id = :after)")
+        params["after"] = str(after)
+
+    sql = f"""
+        SELECT job_id, task, equipment_type, config, status, progress_message,
+               error, submitted_at, started_at, finished_at,
+               submitted_by, request_id, idempotency_key,
+               cache_key, mlflow_run_id, mlflow_experiment_id,
+               metrics, archived
+        FROM ml_jobs.training_jobs
+        WHERE {' AND '.join(where)}
+        ORDER BY submitted_at DESC
+        LIMIT :lim
+    """
+    params["lim"] = limit + 1
+    rows = [dict(r) for r in session.execute(text(sql), params).mappings().fetchall()]
+
+    has_more = len(rows) > limit
+    if has_more:
+        rows = rows[:limit]
+
+    items = [_row_to_response(r) for r in rows]
+    next_cursor = items[-1].job_id if items and has_more else None
+
+    _set_common_headers(response, request_id=request_id)
+    return TrainingJobListResponse(
+        items=items, next_cursor=next_cursor, has_more=has_more, count=len(items),
+    )
+
+
+@router.get(
+    "/jobs/{job_id}",
+    response_model=TrainingJobResponse,
+    summary="Get training job state",
+    description="Returns the current job state. `Prefer: wait=<seconds>` blocks until terminal.",
+)
+def get_training_job(
+    job_id: UUID,
+    response: Response,
+    session: Session = Depends(get_db_session),
+    prefer: Optional[str] = Header(None, alias="Prefer"),
+    x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
+):
+    request_id = _resolve_request_id(x_request_id)
+    prefer_opts = _parse_prefer_header(prefer)
+
+    if prefer_opts["wait"]:
+        row = _wait_for_terminal(session, job_id, prefer_opts["wait"])
+    else:
+        row = _fetch_job(session, job_id)
+        if not row:
+            raise HTTPException(404, f"Job {job_id} not found")
+
+    pref_applied = f"wait={prefer_opts['wait']}" if prefer_opts["wait"] else None
+    is_terminal = row["status"] in _TERMINAL_STATUSES
+    _set_common_headers(
+        response,
+        request_id=request_id,
+        job_id=job_id,
+        mlflow_run_id=row.get("mlflow_run_id"),
+        preference_applied=pref_applied,
+        suggest_retry=not is_terminal,
+    )
+    return _row_to_response(row)
+
+
+@router.get(
+    "/jobs/{job_id}/mlflow",
+    summary="Proxy MLflow run details for a job",
+    description="Lazily fetches the full MLflow run (params, metrics, tags, artifacts list).",
+)
+def get_training_job_mlflow(
+    job_id: UUID,
+    response: Response,
+    session: Session = Depends(get_db_session),
+    x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
+):
+    request_id = _resolve_request_id(x_request_id)
+    row = _fetch_job(session, job_id)
+    if not row:
+        raise HTTPException(404, f"Job {job_id} not found")
+    if not row.get("mlflow_run_id"):
+        raise HTTPException(409, "Job has no MLflow run yet")
+
+    try:
+        from mlflow import MlflowClient
+        client = MlflowClient()
+        run = client.get_run(row["mlflow_run_id"])
+    except Exception as exc:
+        raise HTTPException(503, f"MLflow unavailable: {exc}")
+
+    payload = {
+        "run_id": run.info.run_id,
+        "experiment_id": run.info.experiment_id,
+        "status": run.info.status,
+        "start_time": run.info.start_time,
+        "end_time": run.info.end_time,
+        "params": dict(run.data.params),
+        "metrics": dict(run.data.metrics),
+        "tags": dict(run.data.tags),
+        "artifact_uri": run.info.artifact_uri,
+    }
+    _set_common_headers(
+        response, request_id=request_id, job_id=job_id, mlflow_run_id=row["mlflow_run_id"],
+    )
+    return payload
+
+
+@router.post(
+    "/jobs/{job_id}/cancel",
+    response_model=TrainingJobResponse,
+    summary="Request cooperative cancellation",
+)
+def cancel_training_job(
+    job_id: UUID,
+    response: Response,
+    session: Session = Depends(get_db_session),
+    x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
+):
+    request_id = _resolve_request_id(x_request_id)
+    row = _fetch_job(session, job_id)
+    if not row:
+        raise HTTPException(404, f"Job {job_id} not found")
+    if row["status"] in _TERMINAL_STATUSES:
+        raise HTTPException(409, f"Job is already {row['status']}")
+
+    # Worker checks status at phase boundaries; flag flips state authoritatively
+    # only if the job hasn't started (queued → cancelled is final immediately).
+    new_status = "cancelled"
+    finished_at = datetime.now(timezone.utc) if row["status"] == "queued" else None
+    session.execute(
+        text("""
+            UPDATE ml_jobs.training_jobs
+               SET status = CAST(:s AS ml_jobs.job_status),
+                   finished_at = COALESCE(:f, finished_at),
+                   progress_message = 'cancellation requested'
+             WHERE job_id = :id
+        """),
+        {"s": new_status, "f": finished_at, "id": str(job_id)},
+    )
+    session.commit()
+
+    row = _fetch_job(session, job_id)
+    _set_common_headers(response, request_id=request_id, job_id=job_id)
+    return _row_to_response(row)
+
+
+@router.post(
+    "/jobs/{job_id}/archive",
+    response_model=TrainingJobResponse,
+    summary="Soft-archive a terminal job",
+    description="Hides the job from default listings. Rows are never deleted (audit retention).",
+)
+def archive_training_job(
+    job_id: UUID,
+    response: Response,
+    session: Session = Depends(get_db_session),
+    x_request_id: Optional[str] = Header(None, alias="X-Request-Id"),
+):
+    request_id = _resolve_request_id(x_request_id)
+    row = _fetch_job(session, job_id)
+    if not row:
+        raise HTTPException(404, f"Job {job_id} not found")
+    if row["status"] not in _TERMINAL_STATUSES:
+        raise HTTPException(409, f"Cannot archive a non-terminal job (status={row['status']})")
+
+    session.execute(
+        text("UPDATE ml_jobs.training_jobs SET archived = TRUE WHERE job_id = :id"),
+        {"id": str(job_id)},
+    )
+    session.commit()
+
+    row = _fetch_job(session, job_id)
+    _set_common_headers(response, request_id=request_id, job_id=job_id)
+    return _row_to_response(row)
