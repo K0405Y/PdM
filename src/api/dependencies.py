@@ -70,7 +70,7 @@ def get_master_data() -> MasterData:
 
 # Triton inference client
 
-_triton_client = TritonInferenceClient | None = None
+_triton_client: TritonInferenceClient | None = None
 
 def init_triton() -> None:
     """Construct the Triton gRPC client singleton from env vars.
@@ -114,7 +114,7 @@ def get_triton_client():
 
 # SHAP explainer manager
 
-_explainer_manager = ShapExplainerManager | None = None
+_explainer_manager: ShapExplainerManager | None = None
 
 def init_explainers() -> None:
     """Load XGBoost model objects + SHAP TreeExplainers at startup.
