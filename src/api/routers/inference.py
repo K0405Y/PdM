@@ -114,7 +114,7 @@ def _decode_class(class_index: int, class_names: Optional[List[str]]) -> str:
     return str(class_index)
 
 
-# ---------- endpoints ----------
+# endpoints
 
 
 @router.get("/status", response_model=TritonStatusResponse)

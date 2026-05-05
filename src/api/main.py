@@ -21,9 +21,9 @@ from api.routers import (
     explainability,
     inference,
     master_data,
-    ml_pipeline,
     simulation,
     telemetry,
+    training,
     weather,
 )
 from api.utils import TABLE_CONFIG
@@ -64,7 +64,7 @@ app.add_middleware(
 app.include_router(master_data.router, prefix="/api/v1/master-data", tags=["Master Data"])
 app.include_router(weather.router, prefix="/api/v1/weather", tags=["Weather & Locations"])
 app.include_router(telemetry.router, prefix="/api/v1/telemetry", tags=["Telemetry"])
-app.include_router(ml_pipeline.router, prefix="/api/v1/ml", tags=["ML Pipelines"])
+app.include_router(training.router, prefix="/api/v1/ml", tags=["Training"])
 app.include_router(simulation.router, prefix="/api/v1/simulation", tags=["Simulation"])
 app.include_router(inference.router, prefix="/api/v1/inference", tags=["Inference"])
 app.include_router(explainability.router, prefix="/api/v1/explain", tags=["Explainability"])
