@@ -57,19 +57,6 @@ class ClassificationResult(BaseModel):
         None, description="Predicted health scores used as classifier inputs (if requested)"
     )
 
-
-class FullAssessmentResult(BaseModel):
-    """Combined output: classifier prediction + all health scores."""
-
-    equipment_type: str
-    equipment_id: int
-    predicted_class: str
-    predicted_class_index: int
-    probabilities: Dict[str, float]
-    confidence: float
-    health_scores: Dict[str, float]
-
-
 class TritonModelStatus(BaseModel):
     name: str
     ready: bool
