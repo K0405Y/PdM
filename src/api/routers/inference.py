@@ -23,7 +23,6 @@ from api.dependencies import (
 from api.schemas.inference import (
     BatchInferenceRequest,
     ClassificationResult,
-    FullAssessmentResult,
     HealthEstimationResult,
     InferenceRequest,
     TritonModelStatus,
@@ -83,22 +82,26 @@ def _compute_features_for_record(
     return fe.compute(record)
 
 
-def _augment_with_health(
-    raw_features: np.ndarray,
-    raw_columns: List[str],
+def _build_classifier_input(
+    feature_columns: List[str],
+    raw_record: Dict[str, Any],
+    derived: Dict[str, Any],
     health_scores: Dict[str, float],
-    health_input_columns: List[str],
 ) -> np.ndarray:
-    """Concat predicted health onto the raw feature vector in the expected order.
-
-    `raw_features` shape: (batch, n_raw). Returns shape (batch, n_raw + n_health).
+    """Build the classifier input vector in the model's TRAINING column order.
+    Returns shape (1, n_features).
     """
-    batch = raw_features.shape[0]
-    health_block = np.zeros((batch, len(health_input_columns)), dtype=np.float32)
-    for i, col in enumerate(health_input_columns):
-        v = health_scores.get(col, 0.0)
-        health_block[:, i] = float(v)
-    return np.hstack([raw_features, health_block]).astype(np.float32)
+    merged = {**raw_record, **derived, **health_scores}
+    row = np.zeros((1, len(feature_columns)), dtype=np.float32)
+    for i, col in enumerate(feature_columns):
+        v = merged.get(col)
+        if v is None:
+            continue
+        try:
+            row[0, i] = float(v)
+        except (TypeError, ValueError):
+            row[0, i] = float(np.asarray(v, dtype=np.float32).item())
+    return row
 
 
 def _clip_health(v: float) -> float:
@@ -115,8 +118,6 @@ def _decode_class(class_index: int, class_names: Optional[List[str]]) -> str:
 
 
 # endpoints
-
-
 @router.get("/status", response_model=TritonStatusResponse)
 def inference_status(triton=Depends(get_triton_client)):
     """Triton server reachability + per-model readiness."""
@@ -186,7 +187,7 @@ def predict_classifier(
     triton=Depends(get_triton_client),
     fe_cache=Depends(get_feature_engineer_cache),
 ):
-    """Run the chained pipeline (health regressors --> classifier)."""
+    """Run the chained pipeline (health regressors -->  classifier)."""
     _check_equipment_type(equipment_type)
     if not triton.is_healthy():
         raise HTTPException(503, "Triton inference server is not ready")
@@ -196,33 +197,40 @@ def predict_classifier(
     )
 
     classifier_meta = triton.get_metadata(f"{equipment_type}_classifier")
-    raw_feature_columns = classifier_meta.get("raw_feature_columns") or []
+    classifier_feature_columns = classifier_meta.get("feature_columns") or []
     health_input_columns = classifier_meta.get("health_input_columns") or []
     class_names = classifier_meta.get("class_names")
 
-    if not raw_feature_columns or not health_input_columns:
+    if not classifier_feature_columns or not health_input_columns:
         raise HTTPException(
             500,
             f"Classifier metadata for {equipment_type} is missing "
-            "raw_feature_columns or health_input_columns. Re-run the export.",
+            "feature_columns or health_input_columns. Re-run the export.",
         )
 
-    raw_features = _build_feature_vector(raw_feature_columns, request.sensor_data, derived)
+    # Health regressors have their own (smaller) feature schema - build a
+    # separate vector for them, in the regressor's training order.
+    health_meta = triton.get_metadata(f"{equipment_type}_{health_input_columns[0]}")
+    health_features = _build_feature_vector(
+        health_meta["feature_columns"], request.sensor_data, derived
+    )
 
     # Stage 1: health regressors
     health_predictions_raw = triton.predict_all_health(
-        equipment_type, raw_features, health_columns=health_input_columns
+        equipment_type, health_features, health_columns=health_input_columns
     )
     health_scores = {c: _clip_health(v[0]) for c, v in health_predictions_raw.items()}
 
-    # Stage 2: augment + classify
-    augmented = _augment_with_health(
-        raw_features=raw_features,
-        raw_columns=raw_feature_columns,
+    # Stage 2: build the classifier input in TRAINING column order. Health
+    # values land at their original positions (the columns may be interleaved
+    # with raw features, NOT appended at the end).
+    classifier_input = _build_classifier_input(
+        feature_columns=classifier_feature_columns,
+        raw_record=request.sensor_data,
+        derived=derived,
         health_scores=health_scores,
-        health_input_columns=health_input_columns,
     )
-    class_indices, probabilities = triton.predict_classifier(equipment_type, augmented)
+    class_indices, probabilities = triton.predict_classifier(equipment_type, classifier_input)
     class_idx = int(class_indices[0])
     class_label = _decode_class(class_idx, class_names)
     probs = probabilities[0]
@@ -238,37 +246,4 @@ def predict_classifier(
         probabilities=prob_map,
         confidence=float(probs[class_idx]),
         health_scores=health_scores if include_health else None,
-    )
-
-
-@router.post(
-    "/{equipment_type}/full-assessment",
-    response_model=FullAssessmentResult,
-)
-def full_assessment(
-    equipment_type: str,
-    request: InferenceRequest,
-    triton=Depends(get_triton_client),
-    fe_cache=Depends(get_feature_engineer_cache),
-):
-    """Convenience endpoint: returns classifier prediction AND all health scores.
-
-    Mechanically the same chained call as `/classify?include_health=true`,
-    surfaced as a separate endpoint so consumers can document/intend it.
-    """
-    result = predict_classifier(
-        equipment_type=equipment_type,
-        request=request,
-        include_health=True,
-        triton=triton,
-        fe_cache=fe_cache,
-    )
-    return FullAssessmentResult(
-        equipment_type=result.equipment_type,
-        equipment_id=result.equipment_id,
-        predicted_class=result.predicted_class,
-        predicted_class_index=result.predicted_class_index,
-        probabilities=result.probabilities,
-        confidence=result.confidence,
-        health_scores=result.health_scores or {},
     )
