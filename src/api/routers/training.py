@@ -10,7 +10,7 @@ import json as _json
 import os
 import time
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Optional
 from uuid import UUID, uuid4
 from fastapi import (
     APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query,
@@ -24,7 +24,7 @@ import io
 from api.dependencies import get_db_session
 from api.utils import TABLE_CONFIG, classify_operating_state, validate_equipment_exists
 from api.schemas.telemetry import EquipmentTypeEnum, OperatingState
-from api.schemas.ml import (
+from api.schemas.training import (
     LabelStrategy, ExportFormat,
     FeatureWindow, FeatureWindowsResponse,
     LabelEntry, LabelVectorResponse,
@@ -81,6 +81,7 @@ def export_training_data(
     if start_time:
         where_clauses.append("sample_time >= :start_time")
         params["start_time"] = start_time
+
     if end_time:
         where_clauses.append("sample_time <= :end_time")
         params["end_time"] = end_time
@@ -176,7 +177,7 @@ def bulk_export_training_data(
 ):
     """Export telemetry as a single compressed Parquet file.
 
-    Designed for bulk data transfer to remote environments (Colab, etc.).
+    Designed for bulk data transfer to remote environments.
     Parquet is ~5-10x smaller than CSV and preserves column types.
     Queries in 50k-row chunks to limit server memory usage.
     """
