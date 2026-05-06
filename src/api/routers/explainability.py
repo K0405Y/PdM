@@ -15,7 +15,7 @@ from api.dependencies import (
 )
 from api.routers.inference import (
     SUPPORTED_EQUIPMENT_TYPES,
-    _augment_with_health,
+    _build_classifier_input,
     _build_feature_vector,
     _check_equipment_type,
     _clip_health,
@@ -62,40 +62,50 @@ def _prepare_inputs(
     triton,
     fe_cache,
 ):
-    """Run preprocessing + health stage. Returns (raw_features, augmented, health_scores).
+    """Run preprocessing + health stage.
+    Returns (health_features, classifier_input, health_scores, health_input_columns).
+      - health_features: vector in the health regressors' training column order
+        (also reused as the SHAP input for per-health explanations).
+      - classifier_input: vector in the CLASSIFIER's training column order, with
+        predicted health values placed at their original positions.
 
-    Shared by classify/full-assessment SHAP endpoints. Skipped by the health-only
-    endpoint, which doesn't need the augmented vector.
+    Shared by classify/full-assessment SHAP endpoints; the health-only endpoint
+    builds its own vector since it doesn't need the classifier input.
     """
     derived = _compute_features_for_record(
         equipment_type, request.equipment_id, request.sensor_data, fe_cache
     )
     classifier_meta = triton.get_metadata(f"{equipment_type}_classifier")
-    raw_feature_columns = classifier_meta.get("raw_feature_columns") or []
+    classifier_feature_columns = classifier_meta.get("feature_columns") or []
     health_input_columns = classifier_meta.get("health_input_columns") or []
-    if not raw_feature_columns or not health_input_columns:
+    if not classifier_feature_columns or not health_input_columns:
         raise HTTPException(
             500,
             f"Classifier metadata for {equipment_type} is incomplete; re-run export",
         )
-    raw_features = _build_feature_vector(
-        raw_feature_columns, request.sensor_data, derived
+
+    # Health regressors have their own (smaller) input schema.
+    health_meta = triton.get_metadata(f"{equipment_type}_{health_input_columns[0]}")
+    health_features = _build_feature_vector(
+        health_meta["feature_columns"], request.sensor_data, derived
     )
     raw_health = triton.predict_all_health(
-        equipment_type, raw_features, health_columns=health_input_columns
+        equipment_type, health_features, health_columns=health_input_columns
     )
     health_scores = {c: _clip_health(v[0]) for c, v in raw_health.items()}
-    augmented = _augment_with_health(
-        raw_features=raw_features,
-        raw_columns=raw_feature_columns,
+
+    # Classifier input in TRAINING column order - health values placed at their
+    # original positions (which may be interleaved with raw features).
+    classifier_input = _build_classifier_input(
+        feature_columns=classifier_feature_columns,
+        raw_record=request.sensor_data,
+        derived=derived,
         health_scores=health_scores,
-        health_input_columns=health_input_columns,
     )
-    return raw_features, augmented, health_scores, health_input_columns
+    return health_features, classifier_input, health_scores, health_input_columns
 
 
-# ---------- endpoints ----------
-
+# endpoints 
 
 @router.post(
     "/{equipment_type}/health/{health_column}",
@@ -164,12 +174,12 @@ def shap_classifier(
     `predicted_` so callers can distinguish raw sensors from predicted health.
     """
     _check_equipment_type(equipment_type)
-    raw_features, augmented, _, _ = _prepare_inputs(
+    _, classifier_input, _, _ = _prepare_inputs(
         equipment_type, request, triton, fe_cache
     )
     result = explainer.explain_classifier(
         equipment_type=equipment_type,
-        augmented_features=augmented,
+        classifier_input=classifier_input,
         top_n=top_n,
         class_index=class_index,
     )
@@ -197,13 +207,13 @@ def shap_full_assessment(
 ):
     """Two-level explanation: classifier-over-augmented + every health regressor."""
     _check_equipment_type(equipment_type)
-    raw_features, augmented, _, health_input_columns = _prepare_inputs(
+    health_features, classifier_input, _, health_input_columns = _prepare_inputs(
         equipment_type, request, triton, fe_cache
     )
     bundle = explainer.explain_full_assessment(
         equipment_type=equipment_type,
-        raw_features=raw_features,
-        augmented_features=augmented,
+        health_features=health_features,
+        classifier_input=classifier_input,
         health_columns=health_input_columns,
         top_n=top_n,
     )
@@ -259,8 +269,8 @@ def shap_batch_summary(
     feature_matrix_rows = []
     for req in requests:
         if is_classifier:
-            _, augmented, _, _ = _prepare_inputs(equipment_type, req, triton, fe_cache)
-            feature_matrix_rows.append(augmented[0])
+            _, classifier_input, _, _ = _prepare_inputs(equipment_type, req, triton, fe_cache)
+            feature_matrix_rows.append(classifier_input[0])
         else:
             derived = _compute_features_for_record(
                 equipment_type, req.equipment_id, req.sensor_data, fe_cache
