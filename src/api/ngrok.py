@@ -10,7 +10,7 @@ logger = logging.getLogger("uvicorn.error")
 
 _tunnel = None
 
-def start_tunnel(port: int = 8000):
+def start_tunnel(port: int = 8080):
     """Open an ngrok tunnel if NGROK_ENABLED is True."""
     global _tunnel
     settings = get_settings()
